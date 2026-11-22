@@ -108,18 +108,18 @@ export function startServer() {
   });
 
   /** multipart POST: fields + files ([{ name, type, data: Buffer }]) under "photos". */
-  ctx.upload = async (urlPath, { token, fields = {}, files = [] }) => {
+  ctx.upload = async (urlPath, { token, fields = {}, files = [], headers: extraHeaders = {} }) => {
     await ready;
     const form = new FormData();
     for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
     for (const f of files) form.append("photos", new Blob([f.data], { type: f.type ?? "image/png" }), f.name ?? "photo.png");
     const res = await fetch(`${ctx.baseUrl}${urlPath}`, {
       method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders },
       body: form,
     });
     const text = await res.text();
-    return { status: res.status, body: text ? JSON.parse(text) : null };
+    return { status: res.status, headers: res.headers, body: text ? JSON.parse(text) : null };
   };
 
   /** GET returning raw bytes (for photo downloads). */
@@ -132,9 +132,9 @@ export function startServer() {
   };
 
   /** api(method, path, { body, token }) -> { status, body } */
-  ctx.api = async (method, urlPath, { body, token } = {}) => {
+  ctx.api = async (method, urlPath, { body, token, headers: extraHeaders = {} } = {}) => {
     await ready;
-    const headers = {};
+    const headers = { ...extraHeaders };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (token) headers.Authorization = `Bearer ${token}`;
     const res = await fetch(`${ctx.baseUrl}${urlPath}`, {

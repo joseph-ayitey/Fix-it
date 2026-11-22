@@ -4,6 +4,7 @@
 
 import { Router } from "express";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { idempotent } from "../middleware/idempotency.js";
 import {
   addComment,
   changeStatus,
@@ -52,8 +53,9 @@ router.get("/summary", async (req, res) => {
   res.json(await summaryFor(req.user));
 });
 
-// POST /api/issues: tenant reports (JSON, or multipart with photos parsed in server.js)
-router.post("/", requireRole("tenant"), async (req, res) => {
+// POST /api/issues: tenant reports (JSON, or multipart with photos parsed in server.js).
+// Idempotent with an Idempotency-Key header: a retry returns the same issue.
+router.post("/", requireRole("tenant"), idempotent("POST /issues"), async (req, res) => {
   const input = validate(req.body, {
     propertyId: { type: "integer", required: true },
     title: { required: true, min: 3, max: 120 },
