@@ -7,8 +7,9 @@ import { StatusBadge, UrgencyBadge } from "../components/Badges.jsx";
 import Timeline from "../components/Timeline.jsx";
 import PhotoGallery from "../components/PhotoGallery.jsx";
 import PhotoPicker from "../components/PhotoPicker.jsx";
-import { ErrorMessage, Loading } from "../components/Status.jsx";
+import { ErrorMessage, Skeleton } from "../components/Status.jsx";
 import {
+  ago,
   CATEGORY_LABELS,
   formatDate,
   pendingConfirmations,
@@ -19,6 +20,14 @@ import {
   waitingText,
   workerLabel,
 } from "../labels.js";
+
+/**
+ * An action's error. A 409 means the issue changed under us (someone else acted a
+ * moment ago, or the offer was already answered): offer to reload it, then decide again.
+ */
+function ActionError({ error, title, onReload }) {
+  return <ErrorMessage error={error} title={title} onRetry={error?.status === 409 ? onReload : undefined} retryLabel="Reload the issue" />;
+}
 
 /** Runs an API action with busy/error state; `onDone` gets the result. */
 function useAction(onDone) {
@@ -42,7 +51,7 @@ function useAction(onDone) {
 }
 
 /** Status buttons: exactly the transitions the server says this viewer may make now. */
-function StatusActions({ issue, role, onChanged }) {
+function StatusActions({ issue, role, onChanged, onReload }) {
   const [pending, setPending] = useState(null); // transition waiting for its note
   const [note, setNote] = useState("");
   const { busy, error, run } = useAction(onChanged);
@@ -96,7 +105,7 @@ function StatusActions({ issue, role, onChanged }) {
           ))}
         </div>
       )}
-      <ErrorMessage error={error} title="Couldn't update" />
+      <ActionError error={error} title="Couldn't update" onReload={onReload} />
     </div>
   );
 }
@@ -105,7 +114,7 @@ function StatusActions({ issue, role, onChanged }) {
  * A resolved issue closes when BOTH have confirmed: the tenant (it works) and the
  * landlord (the work is approved). Shows who has, and the button for whoever is next.
  */
-function ConfirmationPanel({ issue, role, onChanged }) {
+function ConfirmationPanel({ issue, role, onChanged, onReload }) {
   const [note, setNote] = useState("");
   const { busy, error, run } = useAction(onChanged);
   if (issue.status !== "resolved") return null;
@@ -150,7 +159,7 @@ function ConfirmationPanel({ issue, role, onChanged }) {
           {role === "worker" && " You'll see it close here once they've both confirmed."}
         </p>
       )}
-      <ErrorMessage error={error} title="Couldn't confirm" />
+      <ActionError error={error} title="Couldn't confirm" onReload={onReload} />
     </div>
   );
 }
@@ -159,7 +168,7 @@ function ConfirmationPanel({ issue, role, onChanged }) {
  * Landlord: who's on the job. Assigned -> show them (unassign). An offer waiting ->
  * show it (withdraw). Otherwise: find a worker by trade and send an offer.
  */
-function WorkerPanel({ issue, onChanged }) {
+function WorkerPanel({ issue, onChanged, onReload }) {
   const suggested = TRADE_FOR_CATEGORY[issue.category];
   const [trade, setTrade] = useState(suggested);
   const [workerId, setWorkerId] = useState(null);
@@ -175,7 +184,10 @@ function WorkerPanel({ issue, onChanged }) {
 
   if (!["open", "in_progress"].includes(issue.status)) return null;
 
-  const lastAnswer = issue.offers?.find((o) => ["declined", "withdrawn", "cancelled"].includes(o.status));
+  // The contract doesn't promise an order for `offers`, so pick the most recent answer explicitly.
+  const lastAnswer = (issue.offers ?? [])
+    .filter((o) => ["declined", "withdrawn", "cancelled"].includes(o.status))
+    .sort((a, b) => Date.parse(b.respondedAt ?? b.createdAt) - Date.parse(a.respondedAt ?? a.createdAt))[0];
 
   if (issue.assignee) {
     return (
@@ -190,7 +202,7 @@ function WorkerPanel({ issue, onChanged }) {
           </button>
         </p>
         <p className="muted small">Talk privately with them below: choose "Private" when commenting.</p>
-        <ErrorMessage error={error} title="Couldn't unassign" />
+        <ActionError error={error} title="Couldn't unassign" onReload={onReload} />
       </div>
     );
   }
@@ -207,7 +219,7 @@ function WorkerPanel({ issue, onChanged }) {
             Withdraw
           </button>
         </p>
-        <ErrorMessage error={error} title="Couldn't withdraw" />
+        <ActionError error={error} title="Couldn't withdraw" onReload={onReload} />
       </div>
     );
   }
@@ -231,13 +243,14 @@ function WorkerPanel({ issue, onChanged }) {
           ))}
         </select>
       </label>
-      <ErrorMessage error={found.error} title="Couldn't search" />
+      <ErrorMessage error={found.error} title="Couldn't search" onRetry={found.reload} />
+      {found.loading && !found.data && <Skeleton variant="list" count={2} label="Finding workers…" />}
       {found.data &&
-        (found.data.length === 0 ? (
+        (found.data.items.length === 0 ? (
           <p className="muted small">No {TRADES[trade].toLowerCase()} has signed up yet. Try another trade.</p>
         ) : (
           <ul className="worker-choices" aria-label="Workers">
-            {found.data.map((w) => (
+            {found.data.items.map((w) => (
               <li key={w.id}>
                 <label className={`worker-choice${workerId === w.id ? " worker-choice--selected" : ""}`}>
                   <input type="radio" name="worker" checked={workerId === w.id} onChange={() => setWorkerId(w.id)} />
@@ -273,7 +286,7 @@ function WorkerPanel({ issue, onChanged }) {
           </div>
         </form>
       )}
-      <ErrorMessage error={error} title="Couldn't send the offer" />
+      <ActionError error={error} title="Couldn't send the offer" onReload={onReload} />
     </div>
   );
 }
@@ -342,17 +355,27 @@ export default function IssueDetailPage() {
   const { id } = useParams();
   const location = useLocation();
   const { user } = useAuth();
-  const { data: issue, error, setData } = useApi((signal) => api.getIssue(id, { signal }), [id]);
+  const { data: issue, error, setData, reload } = useApi((signal) => api.getIssue(id, { signal }), [id]);
 
   if (error) {
+    // A malformed id ("/issues/abc") is a 400 for path.issueId, and someone else's issue
+    // is a 404 (the API never says which): to the user, both mean "no such issue".
+    const missing = [400, 404].includes(error.status);
     return (
       <>
-        <ErrorMessage error={error} title={error.status === 404 ? "Issue not found" : "Couldn't load this issue"} />
+        <ErrorMessage error={error} title={missing ? "Issue not found" : "Couldn't load this issue"} onRetry={missing ? undefined : reload} />
         <Link to="/issues">← All issues</Link>
       </>
     );
   }
-  if (!issue) return <Loading />;
+  if (!issue) {
+    return (
+      <div className="detail">
+        <Skeleton variant="block" height={220} label="Loading issue…" />
+        <Skeleton variant="list" count={3} label="" />
+      </div>
+    );
+  }
 
   const unacknowledged = ["open", "in_progress"].includes(issue.status) && !issue.acknowledgedAt;
   const property = issue.property.label ? `${issue.property.label} (${issue.property.address})` : issue.property.address;
@@ -363,11 +386,18 @@ export default function IssueDetailPage() {
         <Link to="/issues">← All issues</Link>
       </p>
 
-      {location.state?.justReported && (
-        <div className="banner banner--success" role="status">
-          Sent. Your landlord can see it now, and you'll both follow it here.
-        </div>
-      )}
+      {location.state?.justReported &&
+        (location.state.replayed ? (
+          // Idempotent-Replayed: true. The first attempt had reached the server (only its
+          // response was lost), so no second issue was created.
+          <div className="banner banner--info" role="status">
+            We'd already received this report, so nothing was sent twice. Here it is.
+          </div>
+        ) : (
+          <div className="banner banner--success" role="status">
+            Sent. Your landlord can see it now, and you'll both follow it here.
+          </div>
+        ))}
       {location.state?.justAccepted && (
         <div className="banner banner--success" role="status">
           Job accepted. You can now see the address, and talk privately with the landlord below.
@@ -415,13 +445,22 @@ export default function IssueDetailPage() {
                 <dt>Worker</dt>
                 <dd>
                   {issue.assignee ? (issue.assignee.id === user.id ? "You" : workerLabel(issue.assignee)) : <span className="muted">Not assigned yet</span>}
+                  {issue.assignee && issue.assignedAt && <span className="muted"> · since {ago(issue.assignedAt)}</span>}
+                </dd>
+              </div>
+              <div>
+                <dt>Last update</dt>
+                <dd>
+                  <time dateTime={issue.updatedAt} title={formatDate(issue.updatedAt)}>
+                    {ago(issue.updatedAt)}
+                  </time>
                 </dd>
               </div>
             </dl>
           </div>
-          <ConfirmationPanel issue={issue} role={user.role} onChanged={setData} />
-          {user.role === "landlord" && <WorkerPanel key={issue.id} issue={issue} onChanged={setData} />}
-          <StatusActions issue={issue} role={user.role} onChanged={setData} />
+          <ConfirmationPanel issue={issue} role={user.role} onChanged={setData} onReload={reload} />
+          {user.role === "landlord" && <WorkerPanel key={issue.id} issue={issue} onChanged={setData} onReload={reload} />}
+          <StatusActions issue={issue} role={user.role} onChanged={setData} onReload={reload} />
         </div>
 
         <section>

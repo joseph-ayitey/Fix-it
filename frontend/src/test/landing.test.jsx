@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { AuthProvider } from "../auth.jsx";
 import App from "../App.jsx";
 import { tokenStore } from "../api.js";
-import { fakeFetch, landlordUser } from "./fakeFetch.js";
+import { dashboardRoutes, fakeFetch, landlordUser, page, sampleSummary } from "./fakeFetch.js";
 
 const health = { "GET /health": () => ({ body: { status: "ok", database: "up" } }) };
 
@@ -59,9 +59,10 @@ describe("landing page", () => {
     fakeFetch({
       ...health,
       "GET /auth/me": () => ({ body: { user: landlordUser } }),
-      "GET /issues/summary": () => ({ body: { active: 0, urgent: 0, unacknowledged: 0, unassigned: 0, awaitingConfirmation: 0, needsYourConfirmation: 0 } }),
-      "GET /issues": () => ({ body: [] }),
-      "GET /properties": () => ({ body: [] }),
+      ...dashboardRoutes,
+      "GET /issues/summary": () => ({ body: sampleSummary() }),
+      "GET /issues": () => page([]),
+      "GET /properties": () => page([]),
     });
     renderApp("/");
     expect(await screen.findByRole("heading", { name: "Hi, Maria" })).toBeInTheDocument();

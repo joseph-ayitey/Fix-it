@@ -14,6 +14,18 @@ export default defineConfig({
       "/api": { target: API_TARGET, changeOrigin: true },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Leaflet (the map) and React change far less often than our own code: in their own
+        // files, the browser keeps them cached across our releases, and the main bundle stays small.
+        manualChunks(id) {
+          if (id.includes("node_modules/leaflet")) return "leaflet";
+          if (id.includes("node_modules/react") || id.includes("node_modules/scheduler")) return "react";
+        },
+      },
+    },
+  },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.jsx"],

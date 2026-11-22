@@ -3,7 +3,7 @@ import { Navigate } from "react-router-dom";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import { useApi } from "../useApi.js";
-import { EmptyState, ErrorMessage, Field, Loading } from "../components/Status.jsx";
+import { EmptyState, ErrorMessage, Field, Skeleton } from "../components/Status.jsx";
 import { TRADES } from "../labels.js";
 
 function TradeSelect({ id, value, onChange, allowAll = false, required = false }) {
@@ -36,13 +36,17 @@ function Directory() {
         To hire someone, open an issue and use <strong>Find a worker</strong>: they get a job offer they can accept or
         decline. Contact details are shared once they accept.
       </p>
-      <ErrorMessage error={found.error} title="Couldn't search" />
-      {found.data &&
-        (found.data.length === 0 ? (
-          <EmptyState>No workers with that trade yet.</EmptyState>
-        ) : (
+      {found.error ? (
+        <ErrorMessage error={found.error} title="Couldn't search" onRetry={found.reload} />
+      ) : !found.data ? (
+        <Skeleton variant="list" count={3} label="Searching…" />
+      ) : found.data.items.length === 0 ? (
+        <EmptyState title={trade ? `No ${TRADES[trade].toLowerCase()} has signed up yet.` : "No workers have signed up yet."}>
+          {trade ? "Try another trade, or choose All trades." : "Workers appear here once they create an account with a trade."}
+        </EmptyState>
+      ) : (
           <ul className="issue-list">
-            {found.data.map((w) => (
+            {found.data.items.map((w) => (
               <li key={w.id} className="issue-row">
                 <div className="issue-row__link">
                   <div className="issue-row__title">
@@ -58,21 +62,24 @@ function Directory() {
               </li>
             ))}
           </ul>
-        ))}
+      )}
     </section>
   );
 }
 
 function LandlordTeam() {
-  const team = useApi((signal) => api.team({ signal }), []);
+  const team = useApi((signal) => api.myWorkers({ signal }), []);
   const [error, setError] = useState(null);
+  const [removed, setRemoved] = useState(null);
 
   async function remove(worker) {
     const jobs = worker.activeJobs ? ` Their ${worker.activeJobs} active job(s) will become unassigned.` : "";
     if (!window.confirm(`Stop working with ${worker.name}?${jobs}`)) return;
     setError(null);
+    setRemoved(null);
     try {
-      await api.removeWorker(worker.id);
+      const { unassignedIssues } = await api.removeWorker(worker.id);
+      setRemoved({ name: worker.name, unassignedIssues });
       team.reload();
     } catch (err) {
       setError(err);
@@ -87,14 +94,23 @@ function LandlordTeam() {
       </div>
       <section>
         <h2>Your workers</h2>
-        <ErrorMessage error={team.error || error} title="Something went wrong" />
-        {!team.data ? (
-          !team.error && <Loading />
-        ) : team.data.workers.length === 0 ? (
-          <EmptyState>Nobody yet. Open an issue and use "Find a worker" to send your first job offer.</EmptyState>
+        {removed && (
+          <div className="banner banner--success" role="status">
+            You no longer work with {removed.name}.
+            {removed.unassignedIssues > 0 &&
+              ` ${removed.unassignedIssues} active issue${removed.unassignedIssues === 1 ? " is" : "s are"} unassigned again: find someone else from the issue.`}
+          </div>
+        )}
+        <ErrorMessage error={error} title="Couldn't remove the worker" />
+        {team.error ? (
+          <ErrorMessage error={team.error} title="Couldn't load your workers" onRetry={team.reload} />
+        ) : !team.data ? (
+          <Skeleton variant="list" count={2} label="Loading your workers…" />
+        ) : team.data.items.length === 0 ? (
+          <EmptyState title="No workers yet.">Open an issue and use "Find a worker" to send your first job offer.</EmptyState>
         ) : (
           <ul className="issue-list">
-            {team.data.workers.map((w) => (
+            {team.data.items.map((w) => (
               <li key={w.id} className="issue-row">
                 <div className="issue-row__link team-row">
                   <div>
@@ -123,7 +139,7 @@ function WorkerProfile() {
   const { user, updateProfile } = useAuth();
   const [form, setForm] = useState({ trade: user.trade ?? "", area: user.area ?? "" });
   const [state, setState] = useState({ busy: false, error: null, saved: false });
-  const landlords = useApi((signal) => api.team({ signal }), []);
+  const landlords = useApi((signal) => api.myLandlords({ signal }), []);
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -150,11 +166,11 @@ function WorkerProfile() {
               Choose your trade so landlords can find you.
             </div>
           )}
-          <Field label="Trade" id="profile-trade">
+          <Field label="Trade" id="profile-trade" error={state.error?.fieldErrors?.trade}>
             <TradeSelect id="profile-trade" value={form.trade} onChange={(trade) => setForm({ ...form, trade })} required />
           </Field>
-          <Field label="Where you work" id="profile-area" hint="e.g. Barcelona, L'Hospitalet">
-            <input id="profile-area" maxLength={200} value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })} aria-describedby="profile-area-hint" />
+          <Field label="Where you work" id="profile-area" hint="e.g. Barcelona, L'Hospitalet" error={state.error?.fieldErrors?.area}>
+            <input id="profile-area" maxLength={200} value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })} />
           </Field>
           <ErrorMessage error={state.error} title="Couldn't save" />
           {state.saved && (
@@ -170,13 +186,15 @@ function WorkerProfile() {
         </form>
         <section>
           <h2>Landlords you work for</h2>
-          <ErrorMessage error={landlords.error} title="Couldn't load" />
-          {landlords.data &&
-            (landlords.data.landlords.length === 0 ? (
-              <EmptyState>None yet. Accept a job offer and the landlord appears here.</EmptyState>
+          {landlords.error ? (
+            <ErrorMessage error={landlords.error} title="Couldn't load your landlords" onRetry={landlords.reload} />
+          ) : !landlords.data ? (
+            <Skeleton variant="list" count={2} label="Loading your landlords…" />
+          ) : landlords.data.items.length === 0 ? (
+              <EmptyState title="No landlords yet.">Accept a job offer from your dashboard and the landlord appears here.</EmptyState>
             ) : (
               <ul className="issue-list">
-                {landlords.data.landlords.map((l) => (
+                {landlords.data.items.map((l) => (
                   <li key={l.id} className="issue-row">
                     <div className="issue-row__link">
                       <div className="issue-row__title">{l.name}</div>
@@ -185,7 +203,7 @@ function WorkerProfile() {
                   </li>
                 ))}
               </ul>
-            ))}
+            )}
         </section>
       </div>
     </>

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, Navigate, useLocation, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth.jsx";
-import { Field } from "../components/Status.jsx";
+import { ErrorSummary, Field, useFocusFirstInvalid } from "../components/Status.jsx";
 import { TRADES } from "../labels.js";
 
 /**
@@ -9,6 +9,10 @@ import { TRADES } from "../labels.js";
  * puts it in location.state.from), or home. Used in ONE place per page, the
  * "if (user) <Navigate>" below, so signing in can't race against a second redirect.
  */
+// API field name -> label, in form order (for the error summary and focusing).
+const LOGIN_FIELDS = { email: "Email", password: "Password" };
+const SIGNUP_FIELDS = { role: "I am a…", trade: "Your trade", area: "Where you work", name: "Full name", email: "Email", password: "Password" };
+
 function useReturnPath() {
   const location = useLocation();
   return location.state?.from ?? "/";
@@ -20,8 +24,10 @@ export function LoginPage() {
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  useFocusFirstInvalid(error, Object.keys(LOGIN_FIELDS));
 
   if (user) return <Navigate to={returnTo} replace />;
+  const fieldErrors = error?.fieldErrors ?? {};
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -38,25 +44,21 @@ export function LoginPage() {
   return (
     <div className="auth-card">
       <h1>Sign in to FixIt</h1>
-      <form onSubmit={onSubmit} className="stack">
-        <Field label="Email" id="email">
-          <input id="email" type="email" required autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+      <form onSubmit={onSubmit} className="stack" noValidate>
+        <Field label="Email" id="email" error={fieldErrors.email}>
+          <input id="email" type="email" aria-required="true" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         </Field>
-        <Field label="Password" id="password">
+        <Field label="Password" id="password" error={fieldErrors.password}>
           <input
             id="password"
             type="password"
-            required
+            aria-required="true"
             autoComplete="current-password"
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
           />
         </Field>
-        {error && (
-          <div className="banner banner--error" role="alert">
-            {error.message}
-          </div>
-        )}
+        <ErrorSummary error={error} labels={LOGIN_FIELDS} failTitle="Couldn't sign in" />
         <button type="submit" disabled={busy}>
           {busy ? "Signing in…" : "Sign in"}
         </button>
@@ -78,6 +80,8 @@ export function SignupPage() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
+  useFocusFirstInvalid(error, Object.keys(SIGNUP_FIELDS));
+
   if (user) return <Navigate to={returnTo} replace />;
 
   const set = (field) => (e) => setForm({ ...form, [field]: e.target.value });
@@ -85,16 +89,16 @@ export function SignupPage() {
 
   async function onSubmit(e) {
     e.preventDefault();
-    if (!form.role) {
-      setError({ message: "Choose whether you're a tenant, a landlord or a worker.", fieldErrors: { role: "Choose one" } });
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
-      const { trade, area, ...rest } = form;
+      // The API validates everything (the form has noValidate) and names each bad field.
+      // Empty choices are left out, so they come back as "required", not "invalid value".
+      const { trade, area, role, ...rest } = form;
+      const body = { ...rest, ...(role ? { role } : {}) };
       // Trade and area belong to worker accounts only.
-      await signUp(form.role === "worker" ? { ...rest, trade, area: area || null } : rest);
+      if (role === "worker") Object.assign(body, trade ? { trade } : {}, { area: area.trim() || null });
+      await signUp(body);
     } catch (err) {
       setError(err);
       setBusy(false);
@@ -104,8 +108,8 @@ export function SignupPage() {
   return (
     <div className="auth-card">
       <h1>Create your account</h1>
-      <form onSubmit={onSubmit} className="stack">
-        <fieldset className="role-picker">
+      <form onSubmit={onSubmit} className="stack" noValidate>
+        <fieldset className={`role-picker${fieldErrors.role ? " role-picker--invalid" : ""}`} aria-describedby={fieldErrors.role ? "role-error" : undefined}>
           <legend>I am a…</legend>
           {[
             ["tenant", "Tenant", "I rent a home and want to report problems and follow them up."],
@@ -113,16 +117,21 @@ export function SignupPage() {
             ["worker", "Worker", "I do repairs (plumbing, electrics, handyman…) and landlords offer me jobs."],
           ].map(([value, title, text]) => (
             <label key={value} className={`role-option${form.role === value ? " role-option--selected" : ""}`}>
-              <input type="radio" name="role" value={value} checked={form.role === value} onChange={set("role")} />
+              <input type="radio" name="role" id={value === "tenant" ? "role" : undefined} value={value} checked={form.role === value} onChange={set("role")} />
               <span className="role-option__title">{title}</span>
               <span className="role-option__text">{text}</span>
             </label>
           ))}
+          {fieldErrors.role && (
+            <small id="role-error" className="field__error role-picker__error">
+              {fieldErrors.role}
+            </small>
+          )}
         </fieldset>
         {form.role === "worker" && (
           <>
             <Field label="Your trade" id="trade" hint="Landlords find workers by trade." error={fieldErrors.trade}>
-              <select id="trade" required value={form.trade} onChange={set("trade")} aria-describedby="trade-hint">
+              <select id="trade" aria-required="true" value={form.trade} onChange={set("trade")}>
                 <option value="">Choose…</option>
                 {Object.entries(TRADES).map(([value, label]) => (
                   <option key={value} value={value}>
@@ -132,33 +141,27 @@ export function SignupPage() {
               </select>
             </Field>
             <Field label="Where you work (optional)" id="area" hint="e.g. Barcelona, L'Hospitalet" error={fieldErrors.area}>
-              <input id="area" maxLength={200} value={form.area} onChange={set("area")} aria-describedby="area-hint" />
+              <input id="area" maxLength={200} value={form.area} onChange={set("area")} />
             </Field>
           </>
         )}
         <Field label="Full name" id="name" error={fieldErrors.name}>
-          <input id="name" required maxLength={200} autoComplete="name" value={form.name} onChange={set("name")} />
+          <input id="name" aria-required="true" maxLength={200} autoComplete="name" value={form.name} onChange={set("name")} />
         </Field>
         <Field label="Email" id="email" error={fieldErrors.email}>
-          <input id="email" type="email" required autoComplete="email" value={form.email} onChange={set("email")} />
+          <input id="email" type="email" aria-required="true" autoComplete="email" value={form.email} onChange={set("email")} />
         </Field>
         <Field label="Password" id="password" hint="At least 8 characters." error={fieldErrors.password}>
           <input
             id="password"
             type="password"
-            required
-            minLength={8}
+            aria-required="true"
             autoComplete="new-password"
-            aria-describedby="password-hint"
             value={form.password}
             onChange={set("password")}
           />
         </Field>
-        {error && (
-          <div className="banner banner--error" role="alert">
-            {error.message}
-          </div>
-        )}
+        <ErrorSummary error={error} labels={SIGNUP_FIELDS} failTitle="Couldn't create your account" />
         <button type="submit" disabled={busy}>
           {busy ? "Creating account…" : "Create account"}
         </button>

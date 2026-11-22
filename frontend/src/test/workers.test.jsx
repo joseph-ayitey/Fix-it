@@ -5,9 +5,8 @@ import { MemoryRouter } from "react-router-dom";
 import { AuthProvider } from "../auth.jsx";
 import App from "../App.jsx";
 import { tokenStore } from "../api.js";
-import { fakeFetch, landlordUser, sampleIssue } from "./fakeFetch.js";
+import { dashboardRoutes, fakeFetch, landlordUser, page, sampleIssue, sampleSummary, workerUser } from "./fakeFetch.js";
 
-const workerUser = { id: 3, email: "worker@fixit.test", name: "Marc Ribas", role: "worker", trade: "plumber", area: "Barcelona", createdAt: "2026-01-01T00:00:00.000Z" };
 const marcInDirectory = { id: 3, name: "Marc R.", trade: "plumber", tradeLabel: "Plumber", area: "Barcelona", worksForYou: false, completedJobs: 4, activeJobs: 1, inArea: true };
 
 function renderApp(path) {
@@ -24,12 +23,14 @@ function signedInAs(user, routes) {
   tokenStore.set("token");
   return fakeFetch({
     "GET /health": () => ({ body: { status: "ok", database: "up" } }),
+    ...dashboardRoutes,
     "GET /auth/me": () => ({ body: { user } }),
     ...routes,
   });
 }
 
-const emptySummary = { active: 0, urgent: 0, unacknowledged: 0, unassigned: 0, awaitingConfirmation: 0, needsYourConfirmation: 0 };
+const emptySummary = sampleSummary();
+const marcAssigned = { id: 3, name: "Marc Ribas", trade: "plumber", tradeLabel: "Plumber" };
 
 beforeEach(() => tokenStore.set(null));
 
@@ -42,10 +43,11 @@ describe("workers", () => {
         sent = JSON.parse(init.body);
         return { status: 201, body: { token: "t", user: workerUser } };
       },
+      ...dashboardRoutes,
       "GET /issues/summary": () => ({ body: { ...emptySummary, pendingOffers: 0 } }),
-      "GET /issues": () => ({ body: [] }),
-      "GET /properties": () => ({ body: [] }),
-      "GET /offers": () => ({ body: [] }),
+      "GET /issues": () => page([]),
+      "GET /properties": () => page([]),
+      "GET /offers": () => page([], { limit: 50 }),
     });
     const user = userEvent.setup();
     renderApp("/signup");
@@ -81,13 +83,16 @@ describe("workers", () => {
       "GET /issues/100": () => ({ body: issue }),
       "GET /team/directory": (url) => {
         searched = Object.fromEntries(url.searchParams);
-        return { body: [marcInDirectory] };
+        return page([marcInDirectory], { limit: 50 });
       },
       "POST /offers": (_u, init) => {
         offered = JSON.parse(init.body);
         return {
           status: 201,
-          body: { ...issue, offers: [{ id: 9, status: "pending", worker: { id: 3, name: "Marc Ribas", tradeLabel: "Plumber" }, message: offered.message }] },
+          body: {
+            ...issue,
+            offers: [{ id: 9, status: "pending", worker: marcAssigned, message: offered.message, response: null, createdAt: new Date().toISOString(), respondedAt: null }],
+          },
         };
       },
     });
@@ -110,25 +115,29 @@ describe("workers", () => {
     let accepted = false;
     signedInAs(workerUser, {
       "GET /issues/summary": () => ({ body: { ...emptySummary, pendingOffers: 1 } }),
-      "GET /issues": () => ({ body: [] }),
-      "GET /properties": () => ({ body: [] }),
-      "GET /offers": () => ({
-        body: [
-          {
-            id: 9,
-            status: "pending",
-            message: "Tenant home after 5",
-            createdAt: new Date().toISOString(),
-            landlord: { id: 1, name: "Maria Garcia" },
-            issue: { id: 100, title: "Water leaking under the kitchen sink", category: "plumbing", urgency: "urgent", description: "Steady drip.", city: "Barcelona", photoCount: 2 },
-          },
-        ],
-      }),
+      "GET /issues": () => page([]),
+      "GET /properties": () => page([]),
+      "GET /offers": () =>
+        page(
+          [
+            {
+              id: 9,
+              status: "pending",
+              message: "Tenant home after 5",
+              response: null,
+              createdAt: new Date().toISOString(),
+              respondedAt: null,
+              landlord: { id: 1, name: "Maria Garcia" },
+              issue: { id: 100, title: "Water leaking under the kitchen sink", category: "plumbing", urgency: "urgent", description: "Steady drip.", city: "Barcelona", photoCount: 2, status: "open" },
+            },
+          ],
+          { limit: 50 },
+        ),
       "POST /offers/9/accept": () => {
         accepted = true;
-        return { body: sampleIssue({ assignee: { id: 3, name: "Marc Ribas", tradeLabel: "Plumber" } }) };
+        return { body: sampleIssue({ assignee: marcAssigned }) };
       },
-      "GET /issues/100": () => ({ body: sampleIssue({ assignee: { id: 3, name: "Marc Ribas", tradeLabel: "Plumber" } }) }),
+      "GET /issues/100": () => ({ body: sampleIssue({ assignee: marcAssigned }) }),
     });
     const user = userEvent.setup();
     renderApp("/");
@@ -147,7 +156,7 @@ describe("workers", () => {
     const issue = sampleIssue({
       status: "resolved",
       resolvedAt: new Date().toISOString(),
-      assignee: { id: 3, name: "Marc Ribas", tradeLabel: "Plumber" },
+      assignee: marcAssigned,
       confirmations: { tenant: new Date().toISOString(), landlord: null },
       canConfirm: false,
       allowedTransitions: [],
@@ -161,7 +170,7 @@ describe("workers", () => {
   });
 
   it("landlord and worker can post a private note; the tenant gets no such option", async () => {
-    const issue = sampleIssue({ status: "in_progress", assignee: { id: 3, name: "Marc Ribas", tradeLabel: "Plumber" }, allowedTransitions: [] });
+    const issue = sampleIssue({ status: "in_progress", assignee: marcAssigned, allowedTransitions: [] });
     let sent;
     signedInAs(workerUser, {
       "GET /issues/100": () => ({ body: issue }),

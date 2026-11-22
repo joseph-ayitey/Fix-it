@@ -2,47 +2,80 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
-import { useApi } from "../useApi.js";
+import { usePagedApi } from "../useApi.js";
 import PropertyMap from "../components/PropertyMap.jsx";
-import { EmptyState, ErrorMessage, Field, Loading } from "../components/Status.jsx";
+import { EmptyState, ErrorMessage, ErrorSummary, Field, LoadMore, Skeleton, useFocusFirstInvalid } from "../components/Status.jsx";
 import { propertyName } from "../labels.js";
+
+const PAGE_SIZE = 20;
 
 export default function PropertiesPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const isLandlord = user.role === "landlord";
-  const { data, error, loading } = useApi((signal) => api.listProperties({ signal }), []);
+  const list = usePagedApi((cursor, signal) => api.listProperties({ limit: PAGE_SIZE, cursor }, { signal }), []);
 
-  if (error) return <ErrorMessage error={error} title="Couldn't load properties" />;
-  if (loading) return <Loading />;
+  const header = (
+    <div className="page-header page-header--row">
+      <h1>{{ landlord: "Properties", tenant: "Your homes", worker: "Job locations" }[user.role]}</h1>
+      {user.role !== "worker" && (
+        <Link to={isLandlord ? "/properties/new" : "/join"} className="button">
+          {isLandlord ? "Add property" : "Join another home"}
+        </Link>
+      )}
+    </div>
+  );
 
+  if (list.error) {
+    return (
+      <>
+        {header}
+        <ErrorMessage error={list.error} title="Couldn't load properties" onRetry={list.reload} />
+      </>
+    );
+  }
+  if (!list.items) {
+    return (
+      <>
+        {header}
+        <Skeleton variant="block" height={300} label="Loading properties…" />
+        <Skeleton variant="cards" count={3} label="" />
+      </>
+    );
+  }
+
+  const data = list.items;
   const mapped = data.filter((p) => p.latitude !== null);
 
   return (
     <>
-      <div className="page-header page-header--row">
-        <h1>{{ landlord: "Properties", tenant: "Your homes", worker: "Job locations" }[user.role]}</h1>
-        {user.role !== "worker" && (
-          <Link to={isLandlord ? "/properties/new" : "/join"} className="button">
-            {isLandlord ? "Add property" : "Join another home"}
-          </Link>
-        )}
-      </div>
-
+      {header}
       {data.length === 0 ? (
-        <EmptyState>
-          {user.role === "worker" ? (
-            "No active jobs, so no locations to show."
-          ) : isLandlord ? (
-            <>
-              No properties yet. <Link to="/properties/new">Add one</Link>.
-            </>
-          ) : (
-            <>
-              You're not linked to a home. <Link to="/join">Enter a join code</Link>.
-            </>
-          )}
-        </EmptyState>
+        user.role === "worker" ? (
+          <EmptyState title="No job locations yet.">Accept a job offer and its address appears here.</EmptyState>
+        ) : isLandlord ? (
+          <EmptyState
+            title="No properties yet."
+            action={
+              <Link to="/properties/new" className="button">
+                Add your first property
+              </Link>
+            }
+          >
+            Add one and share its join code with your tenants.
+          </EmptyState>
+        ) : (
+          <EmptyState
+            title="You're not linked to a home."
+            action={
+              <Link to="/join" className="button">
+                Enter a join code
+              </Link>
+            }
+          >
+            Ask your landlord for the join code.
+          </EmptyState>
+        )
       ) : (
         <>
           {mapped.length > 0 && <PropertyMap properties={mapped} onSelect={(id) => navigate(`/properties/${id}`)} />}
@@ -54,6 +87,7 @@ export default function PropertiesPage() {
                   <p className="card__address">{p.addressInput}</p>
                   <p className="card__meta">
                     {p.openIssueCount} open issue{p.openIssueCount === 1 ? "" : "s"}
+                    {p.urgentIssueCount > 0 && <strong className="text-danger"> · {p.urgentIssueCount} urgent</strong>}
                     {isLandlord && ` · ${p.tenantCount} tenant${p.tenantCount === 1 ? "" : "s"}`}
                     {p.latitude === null && " · not on map"}
                   </p>
@@ -61,11 +95,14 @@ export default function PropertiesPage() {
               </li>
             ))}
           </ul>
+          <LoadMore list={list} label="Load more properties" noun="properties" />
         </>
       )}
     </>
   );
 }
+
+const PROPERTY_FIELDS = { address: "Address", label: "Nickname" };
 
 export function AddPropertyPage() {
   const navigate = useNavigate();
@@ -73,13 +110,15 @@ export function AddPropertyPage() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const fieldErrors = error?.fieldErrors ?? {};
+  useFocusFirstInvalid(error, Object.keys(PROPERTY_FIELDS));
 
   async function onSubmit(e) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const property = await api.addProperty({ address: form.address, label: form.label || null });
+      // No checks here: the API validates against the contract and says what's wrong.
+      const property = await api.addProperty({ address: form.address.trim(), label: form.label.trim() || null });
       navigate(`/properties/${property.id}`, { state: { justAdded: true } });
     } catch (err) {
       setError(err);
@@ -95,14 +134,12 @@ export function AddPropertyPage() {
           We'll find it on OpenStreetMap to place it on your map, and give it a join code to share with your tenants.
         </p>
       </div>
-      <form className="form stack" onSubmit={onSubmit}>
+      <form className="form stack" onSubmit={onSubmit} noValidate>
         <Field label="Address" id="address" hint="Street and number, city, country." error={fieldErrors.address}>
           <input
             id="address"
-            required
-            minLength={5}
+            aria-required="true"
             maxLength={500}
-            aria-describedby="address-hint"
             placeholder="Carrer de Mallorca 401, Barcelona, Spain"
             value={form.address}
             onChange={(e) => setForm({ ...form, address: e.target.value })}
@@ -119,11 +156,7 @@ export function AddPropertyPage() {
             disabled={busy}
           />
         </Field>
-        {error && (
-          <div className="banner banner--error" role="alert">
-            {error.message}
-          </div>
-        )}
+        <ErrorSummary error={error} labels={PROPERTY_FIELDS} failTitle="Couldn't add the property" />
         <div className="form__actions">
           <button type="submit" disabled={busy}>
             {busy ? "Looking up address…" : "Add property"}
@@ -158,7 +191,7 @@ export function JoinPropertyPage() {
       <h1>Link your home</h1>
       <p className="muted">Your landlord can find this 8-character code on the property's page in FixIt.</p>
       <form className="stack" onSubmit={onSubmit}>
-        <Field label="Join code" id="code">
+        <Field label="Join code" id="code" error={error?.fieldErrors.code}>
           <input
             id="code"
             className="code-input"

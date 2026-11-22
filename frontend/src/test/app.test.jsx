@@ -7,7 +7,7 @@ import { MemoryRouter } from "react-router-dom";
 import { AuthProvider } from "../auth.jsx";
 import App from "../App.jsx";
 import { tokenStore } from "../api.js";
-import { fakeFetch, landlordUser, sampleIssue, sampleProperty, tenantUser } from "./fakeFetch.js";
+import { dashboardRoutes, fakeFetch, landlordUser, page, problem, sampleIssue, sampleProperty, sampleSummary, tenantUser } from "./fakeFetch.js";
 
 const health = { "GET /health": () => ({ body: { status: "ok", database: "up", geocoding: "enabled" } }) };
 
@@ -23,7 +23,7 @@ function renderApp(path) {
 
 function signedInAs(user, routes = {}) {
   tokenStore.set("token");
-  return fakeFetch({ ...health, "GET /auth/me": () => ({ body: { user } }), ...routes });
+  return fakeFetch({ ...health, ...dashboardRoutes, "GET /auth/me": () => ({ body: { user } }), ...routes });
 }
 
 beforeEach(() => tokenStore.set(null));
@@ -32,10 +32,11 @@ describe("signing in", () => {
   it("shows visitors the landing page at /, and 'Sign in' leads to the dashboard", async () => {
     fakeFetch({
       ...health,
+      ...dashboardRoutes,
       "POST /auth/login": () => ({ body: { token: "t", user: landlordUser } }),
-      "GET /issues/summary": () => ({ body: { active: 1, urgent: 1, unacknowledged: 1, unassigned: 1, awaitingConfirmation: 0 } }),
-      "GET /issues": () => ({ body: [sampleIssue()] }),
-      "GET /properties": () => ({ body: [{ ...sampleProperty, joinCode: "ABCD2345" }] }),
+      "GET /issues/summary": () => ({ body: sampleSummary({ active: 1, urgent: 1, unacknowledged: 1, unassigned: 1 }) }),
+      "GET /issues": () => page([sampleIssue()]),
+      "GET /properties": () => page([{ ...sampleProperty, joinCode: "ABCD2345" }]),
     });
     const user = userEvent.setup();
     renderApp("/");
@@ -48,8 +49,8 @@ describe("signing in", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByRole("heading", { name: "Hi, Maria" })).toBeInTheDocument();
-    expect(screen.getByText("1 issue is waiting for a first response.")).toBeInTheDocument();
-    expect(screen.getByText(/No response from landlord for 2 days/)).toBeInTheDocument();
+    expect(await screen.findByText("1 issue is waiting for a first response.")).toBeInTheDocument();
+    expect(await screen.findByText(/No response from landlord for 2 days/)).toBeInTheDocument();
     expect(tokenStore.get()).toBe("t");
   });
 
@@ -57,8 +58,8 @@ describe("signing in", () => {
     fakeFetch({
       ...health,
       "POST /auth/login": () => ({ body: { token: "t", user: landlordUser } }),
-      "GET /issues": () => ({ body: [sampleIssue()] }),
-      "GET /properties": () => ({ body: [] }),
+      "GET /issues": () => page([sampleIssue()]),
+      "GET /properties": () => page([]),
     });
     const user = userEvent.setup();
     renderApp("/issues");
@@ -69,7 +70,7 @@ describe("signing in", () => {
   });
 
   it("shows the server's message for a wrong password", async () => {
-    fakeFetch({ ...health, "POST /auth/login": () => ({ status: 401, body: { error: { message: "email or password is incorrect" } } }) });
+    fakeFetch({ ...health, "POST /auth/login": () => problem(401, "email or password is incorrect") });
     const user = userEvent.setup();
     renderApp("/login");
     await user.type(await screen.findByLabelText("Email"), "x@example.com");
@@ -83,9 +84,9 @@ describe("tenant", () => {
   it("with no home yet is asked for a join code, and joining opens the property", async () => {
     let sentCode;
     signedInAs(tenantUser, {
-      "GET /issues/summary": () => ({ body: { active: 0, urgent: 0, unacknowledged: 0, awaitingConfirmation: 0 } }),
-      "GET /issues": () => ({ body: [] }),
-      "GET /properties": () => ({ body: [] }),
+      "GET /issues/summary": () => ({ body: sampleSummary() }),
+      "GET /issues": () => page([]),
+      "GET /properties": () => page([]),
       "POST /properties/join": (_u, init) => {
         sentCode = JSON.parse(init.body).code;
         return { status: 201, body: sampleProperty };
@@ -106,7 +107,7 @@ describe("tenant", () => {
   it("reports an issue with category and urgency", async () => {
     let sent;
     signedInAs(tenantUser, {
-      "GET /properties": () => ({ body: [sampleProperty] }),
+      "GET /properties": () => page([sampleProperty]),
       "POST /issues": (_u, init) => {
         sent = JSON.parse(init.body);
         return { status: 201, body: sampleIssue({ id: 101 }) };
@@ -207,7 +208,7 @@ describe("landlord", () => {
       "GET /properties/10": () => ({
         body: { ...sampleProperty, joinCode: "ABCD2345", tenants: [{ id: 2, name: "Anna Soler", email: "tenant@fixit.test", joinedAt: "2026-01-02T00:00:00.000Z" }] },
       }),
-      "GET /issues": () => ({ body: [sampleIssue()] }),
+      "GET /issues": () => page([sampleIssue()]),
     });
     renderApp("/properties/10");
     expect(await screen.findByLabelText("Join code")).toHaveTextContent("ABCD-2345");
@@ -246,9 +247,9 @@ describe("landlord", () => {
 
   it("can't open tenant-only pages", async () => {
     signedInAs(landlordUser, {
-      "GET /issues/summary": () => ({ body: { active: 0, urgent: 0, unacknowledged: 0, awaitingConfirmation: 0 } }),
-      "GET /issues": () => ({ body: [] }),
-      "GET /properties": () => ({ body: [] }),
+      "GET /issues/summary": () => ({ body: sampleSummary() }),
+      "GET /issues": () => page([]),
+      "GET /properties": () => page([]),
     });
     renderApp("/issues/new");
     expect(await screen.findByRole("heading", { name: "Hi, Maria" })).toBeInTheDocument();

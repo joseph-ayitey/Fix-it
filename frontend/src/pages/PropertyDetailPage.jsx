@@ -2,10 +2,10 @@ import { useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
-import { useApi } from "../useApi.js";
+import { useApi, usePagedApi } from "../useApi.js";
 import PropertyMap from "../components/PropertyMap.jsx";
 import IssueList from "../components/IssueList.jsx";
-import { ErrorMessage, Loading } from "../components/Status.jsx";
+import { EmptyState, ErrorMessage, LoadMore, Skeleton } from "../components/Status.jsx";
 import { formatDate, propertyName } from "../labels.js";
 
 const GEOCODE_MESSAGES = {
@@ -116,26 +116,41 @@ export default function PropertyDetailPage() {
   const isLandlord = user.role === "landlord";
 
   const property = useApi((signal) => api.getProperty(id, { signal }), [id]);
-  const issues = useApi((signal) => api.listIssues({ propertyId: id }, { signal }), [id]);
-  const [retrying, setRetrying] = useState(false);
+  const issues = usePagedApi((cursor, signal) => api.listIssues({ propertyId: id, limit: 20, cursor }, { signal }), [id]);
+  const [geocode, setGeocode] = useState({ busy: false, error: null });
 
   if (property.error) {
+    // A malformed id is a 400 (path.propertyId) and someone else's property a 404:
+    // to the user, both mean there's no such property for them.
+    const missing = [400, 404].includes(property.error.status);
     return (
       <>
-        <ErrorMessage error={property.error} title={property.error.status === 404 ? "Property not found" : "Couldn't load this property"} />
+        <ErrorMessage
+          error={property.error}
+          title={missing ? "Property not found" : "Couldn't load this property"}
+          onRetry={missing ? undefined : property.reload}
+        />
         <Link to="/properties">← Back</Link>
       </>
     );
   }
-  if (!property.data) return <Loading />;
+  if (!property.data) {
+    return (
+      <div className="detail">
+        <Skeleton variant="block" height={280} label="Loading property…" />
+        <Skeleton variant="list" count={3} label="" />
+      </div>
+    );
+  }
   const p = property.data;
 
   async function retryGeocode() {
-    setRetrying(true);
+    setGeocode({ busy: true, error: null });
     try {
       property.setData(await api.retryGeocode(p.id));
-    } finally {
-      setRetrying(false);
+      setGeocode({ busy: false, error: null });
+    } catch (err) {
+      setGeocode({ busy: false, error: err });
     }
   }
 
@@ -176,10 +191,11 @@ export default function PropertyDetailPage() {
             <div className="panel">
               <p className="muted small">{GEOCODE_MESSAGES[p.geocodeStatus]}</p>
               {isLandlord && p.geocodeStatus !== "pending" && (
-                <button type="button" className="button--ghost button--small" onClick={retryGeocode} disabled={retrying}>
-                  {retrying ? "Looking up…" : "Try the map lookup again"}
+                <button type="button" className="button--ghost button--small" onClick={retryGeocode} disabled={geocode.busy}>
+                  {geocode.busy ? "Looking up…" : "Try the map lookup again"}
                 </button>
               )}
+              <ErrorMessage error={geocode.error} title="The map lookup didn't work" />
             </div>
           )}
           {isLandlord ? (
@@ -202,11 +218,28 @@ export default function PropertyDetailPage() {
 
         <section>
           <h2>{{ landlord: "Issues at this property", tenant: "Your issues here", worker: "Your jobs here" }[user.role]}</h2>
-          <ErrorMessage error={issues.error} title="Couldn't load issues" />
-          {issues.data ? (
-            <IssueList issues={issues.data} showProperty={false} showReporter={user.role !== "tenant"} empty="No issues reported here yet." />
+          {issues.error ? (
+            <ErrorMessage error={issues.error} title="Couldn't load issues" onRetry={issues.reload} />
+          ) : !issues.items ? (
+            <Skeleton variant="list" count={2} label="Loading issues…" />
+          ) : issues.items.length === 0 ? (
+            <EmptyState
+              title="No issues reported here yet."
+              action={
+                user.role === "tenant" && (
+                  <Link to={`/issues/new?propertyId=${p.id}`} className="button">
+                    Report an issue
+                  </Link>
+                )
+              }
+            >
+              {isLandlord ? "Tenants who link to this property with its join code can report problems." : null}
+            </EmptyState>
           ) : (
-            !issues.error && <Loading />
+            <>
+              <IssueList issues={issues.items} showProperty={false} showReporter={user.role !== "tenant"} />
+              <LoadMore list={issues} label="Load more issues" noun="issues" />
+            </>
           )}
         </section>
       </div>

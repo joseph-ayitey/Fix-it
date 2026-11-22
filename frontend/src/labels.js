@@ -115,3 +115,75 @@ export function waitingText(issue, now = Date.now()) {
 }
 
 export const propertyName = (p) => p.label || p.streetAddress || p.addressInput || p.address;
+
+/** Issue inbox sort orders (GET /issues `sort`). */
+export const SORT_LABELS = {
+  priority: "Priority (needs attention first)",
+  newest: "Newest first",
+  updated: "Recently updated",
+};
+
+/**
+ * A median from GET /dashboard/stats, in hours, as words: "40 min", "5.5 hours",
+ * "3.2 days". `null` means there was nothing to measure yet.
+ */
+export function formatHours(hours) {
+  if (hours === null || hours === undefined) return null;
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} min`;
+  if (hours < 48) return `${hours < 10 ? Math.round(hours * 10) / 10 : Math.round(hours)} hours`.replace(/^1 hours/, "1 hour");
+  const days = hours / 24;
+  return `${days < 10 ? Math.round(days * 10) / 10 : Math.round(days)} days`;
+}
+
+/** "16 Nov" for a week start date ("2026-11-16", a date without a time). */
+export function shortDate(isoDate) {
+  // Parse as UTC midnight and format in UTC, so the label is the same day in every time zone.
+  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+/**
+ * One line for an event in the dashboard's activity feed (GET /dashboard/activity),
+ * after the actor's name: "commented", "assigned Marc R. (Plumber)", …
+ */
+export function describeActivity(event) {
+  const photos = event.photoCount ?? 0;
+  const withPhotos = photos ? ` with ${photos} photo${photos === 1 ? "" : "s"}` : "";
+  const worker = event.subject ? `${event.subject.name}${event.subject.tradeLabel ? ` (${event.subject.tradeLabel})` : ""}` : "a worker";
+  switch (event.type) {
+    case "reported":
+      return `reported an issue${withPhotos}`;
+    case "comment":
+      return event.excerpt ? `commented${withPhotos}` : `added ${photos} photo${photos === 1 ? "" : "s"}`;
+    case "status_change":
+      return event.toStatus ? `moved it to ${STATUS_SHORT[event.toStatus]}` : "changed the status";
+    case "assigned":
+      return `assigned ${worker}`;
+    case "unassigned":
+      return `took ${worker} off the job`;
+    case "confirmed":
+      return event.actor.role === "landlord" ? "approved the work" : "confirmed it's fixed";
+    case "offer_sent":
+      return `offered the job to ${worker}`;
+    case "offer_accepted":
+      return "accepted the job";
+    case "offer_declined":
+      return "declined the job";
+    case "offer_withdrawn":
+      return `withdrew the offer to ${worker}`;
+    default:
+      return "updated the issue";
+  }
+}
+
+/**
+ * What a property's map pin says: "urgent" (urgent open issues), "open" (open issues)
+ * or "clear" (nothing open). Shared by the map, its legend and the property cards.
+ * (Kept here rather than in PropertyMap.jsx, which tests replace with a stub.)
+ */
+export function pinState(p) {
+  if (p.urgentIssueCount > 0) return "urgent";
+  if (p.openIssueCount > 0) return "open";
+  return "clear";
+}
+
+export const PIN_LABELS = { urgent: "Urgent issues open", open: "Open issues", clear: "All clear" };

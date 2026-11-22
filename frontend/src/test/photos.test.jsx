@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { AuthProvider } from "../auth.jsx";
 import App from "../App.jsx";
 import { tokenStore } from "../api.js";
-import { fakeFetch, landlordUser, sampleIssue, sampleProperty, tenantUser } from "./fakeFetch.js";
+import { fakeFetch, landlordUser, page, sampleIssue, sampleProperty, tenantUser } from "./fakeFetch.js";
 
 const png = (name = "leak.png", size = 100) => new File([new Uint8Array(size)], name, { type: "image/png" });
 
@@ -34,7 +34,7 @@ describe("photo uploads", () => {
   it("a report with photos is sent as multipart with the files under 'photos'", async () => {
     let sent;
     signedInAs(tenantUser, {
-      "GET /properties": () => ({ body: [sampleProperty] }),
+      "GET /properties": () => page([sampleProperty]),
       "POST /issues": (_u, init) => {
         sent = init;
         return { status: 201, body: sampleIssue({ id: 101 }) };
@@ -62,7 +62,7 @@ describe("photo uploads", () => {
   });
 
   it("refuses non-images and oversized files before uploading", async () => {
-    signedInAs(tenantUser, { "GET /properties": () => ({ body: [sampleProperty] }) });
+    signedInAs(tenantUser, { "GET /properties": () => page([sampleProperty]) });
     const user = userEvent.setup({ applyAccept: false });
     renderApp("/issues/new");
 
@@ -89,7 +89,7 @@ describe("photo uploads", () => {
           status: 201,
           body: {
             ...issue,
-            events: [...issue.events, { id: 2, type: "comment", actor: { id: 1, name: "Maria Garcia", role: "landlord" }, body: null, createdAt: new Date().toISOString(), photos: [{ ...photo, id: 8, url: "/api/issues/100/photos/8", originalName: "after.png" }] }],
+            events: [...issue.events, { id: 2, type: "comment", visibility: "shared", actor: { id: 1, name: "Maria Garcia", role: "landlord" }, subject: null, body: null, fromStatus: null, toStatus: null, createdAt: new Date().toISOString(), photos: [{ ...photo, id: 8, url: "/api/issues/100/photos/8", originalName: "after.png" }] }],
           },
         };
       },
