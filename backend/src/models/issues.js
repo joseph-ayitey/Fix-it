@@ -123,8 +123,11 @@ function toIssue(row, viewer) {
   };
 }
 
-/** Access rule as SQL: issues `viewer` may see. One rule, used everywhere. */
-function visibleTo(viewer, p) {
+/**
+ * Access rule as SQL: issues `viewer` may see (alias `i` = issues, `p` = properties).
+ * One rule, used everywhere: lists, details, the summary and the dashboard.
+ */
+export function visibleTo(viewer, p) {
   if (viewer.role === "landlord") return `p.landlord_id = ${p(viewer.id)}`;
   if (viewer.role === "worker") return `i.assigned_worker_id = ${p(viewer.id)}`;
   return `i.reported_by = ${p(viewer.id)}`;

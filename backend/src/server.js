@@ -25,6 +25,7 @@ import propertiesRouter from "./routes/properties.js";
 import issuesRouter from "./routes/issues.js";
 import teamRouter from "./routes/team.js";
 import offersRouter from "./routes/offers.js";
+import dashboardRouter from "./routes/dashboard.js";
 
 export const OPENAPI_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "openapi.yaml");
 
@@ -72,6 +73,7 @@ export function createApp({ geocoder = noGeocoder, logError = console.error, val
   app.use("/api/issues", issuesRouter);
   app.use("/api/team", teamRouter);
   app.use("/api/offers", offersRouter);
+  app.use("/api/dashboard", dashboardRouter);
 
   // Express 5 sends errors thrown in async handlers here automatically.
   // eslint-disable-next-line no-unused-vars

@@ -36,7 +36,7 @@ test("every operation in openapi.yaml is implemented (none documented but missin
   const operations = Object.entries(spec.paths).flatMap(([path, item]) =>
     ["get", "post", "patch", "put", "delete"].filter((m) => item[m]).map((m) => ({ method: m.toUpperCase(), path })),
   );
-  assert.equal(operations.length, 31);
+  assert.equal(operations.length, 33);
   for (const op of operations) {
     const url = op.path.replace(/\{[^}]+\}/g, "999999");
     const res = await rawFetch(op.method, url, { token: landlord.token });
