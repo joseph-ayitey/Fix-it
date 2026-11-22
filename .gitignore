@@ -1,0 +1,18 @@
+# One .gitignore for the whole repository.
+
+# Secrets: real values live only in .env on your machine. .env.example IS committed.
+.env
+.env.*
+!.env.example
+
+# Dependencies (reinstalled with `npm install`)
+node_modules/
+
+# Runtime data: uploaded photos, local backups
+backend/data/
+
+# Build output, coverage, logs, OS files
+dist/
+coverage/
+*.log
+.DS_Store

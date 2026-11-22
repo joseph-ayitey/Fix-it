@@ -1,0 +1,26 @@
+label,address,notes
+Casa Batlló flat,"Passeig de Gràcia 43, 08007 Barcelona, Spain",real address
+La Pedrera studio,"Passeig de Gràcia 92, 08008 Barcelona, Spain",
+Eixample flat,"Carrer de Mallorca 401, Barcelona, Spain",also added by npm run seed
+Pau Claris 3rd floor,"  Carrer   de Pau Claris 100 ,Barcelona, Spain ",messy spacing on purpose
+Rambla de Catalunya flat,"Rambla de Catalunya 50, 08007 Barcelona, Spain",
+Provença flat,"Carrer de Provença 275, Barcelona, Spain",
+Gran Via office,"Gran Via de les Corts Catalanes 600, Barcelona, Spain",
+Aragó duplex,"Carrer d'Aragó 312, Barcelona, Spain",
+Diagonal penthouse,"Avinguda Diagonal 400, Barcelona, Spain",
+"Gràcia flat, 2nd floor","Carrer de Verdi 50, Barcelona, Spain",comma inside a quoted label
+Poble-sec studio,"Carrer de Blai 20, Barcelona, Spain",
+Born loft,"Carrer de la Princesa 20, Barcelona, Spain",
+Raval studio,"Carrer de Sant Pau 70, Barcelona, Spain",
+Sant Gervasi flat,"Carrer de Muntaner 200, Barcelona, Spain",
+Sants flat,"Carrer de Sants 100, Barcelona, Spain",
+,"Passeig de Sant Joan 90, Barcelona, Spain",no label: stored as NULL
+Còrsega flat,"Carrer de Còrsega 300, Barcelona, Spain",
+Consell de Cent flat,"Carrer del Consell de Cent 350, Barcelona, Spain",
+Poblenou loft,"Rambla del Poblenou 60, Barcelona, Spain",
+València flat,"Carrer de València 250, Barcelona, Spain",
+Batlló again,"passeig de gràcia 43,  08007 barcelona, spain",duplicate of line 2 (case and spacing differ)
+No address,,missing address
+Just a number,12345,not an address
+Unquoted comma,Carrer de Balmes 150, Barcelona,comma without quotes = too many fields
+Nowhere,"Zzzzznotarealstreet 99999, Nowhereville, Nowhereland",OpenStreetMap won't find it: saved without map pin

@@ -1,0 +1,58 @@
+# FixIt in Docker.
+#
+#   docker compose up -d db               PostgreSQL only (use this with `npm run dev`)
+#   docker compose --profile app up -d    PostgreSQL + the API in a container
+#   docker compose exec db psql -U fixit fixit     open a SQL prompt on the database
+#   docker compose down                   stop (data is KEPT in the volumes)
+#   docker compose down -v                stop AND DELETE all data
+#
+# Settings come from .env (see .env.example).
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      # Only used the first time the volume is created (that's how the postgres image works):
+      # changing them later does NOT change the existing database's password.
+      POSTGRES_DB: ${PGDATABASE:-fixit}
+      POSTGRES_USER: ${PGUSER:-fixit}
+      POSTGRES_PASSWORD: ${PGPASSWORD:?set PGPASSWORD in .env}
+    ports:
+      # Host port 5433 by default: 5432 is often already taken by another local Postgres.
+      - "${PGPORT:-5433}:5432"
+    volumes:
+      - fixit_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-fixit} -d ${PGDATABASE:-fixit}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # The API itself, optional: most of the time you'll run it with `npm run dev` instead.
+  # The schema is NOT created here: the API applies migrations itself on startup.
+  api:
+    profiles: ["app"]
+    build: .
+    image: fixit-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      PGHOST: db # inside Docker's network the database is "db", on its normal port
+      PGPORT: "5432"
+      UPLOAD_DIR: /app/data/uploads
+    ports:
+      - "${API_PORT:-3000}:3000"
+    volumes:
+      - fixit_uploads:/app/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  # Named fixit_postgres (not fixit_pgdata) on purpose: an older volume with that name
+  # may exist from Week 1 with a different password, and Postgres would keep using it.
+  fixit_postgres:
+  fixit_uploads:

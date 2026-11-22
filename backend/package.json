@@ -1,0 +1,26 @@
+{
+  "name": "fixit",
+  "version": "1.0.0",
+  "description": "FixIt API: landlords add properties (geocoded via OpenStreetMap), tenants join with a code and report maintenance issues, and both sides track each issue to resolution on a shared timeline. Express + SQLite.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node src/server.js",
+    "dev": "node --watch-path=./src --watch-path=./.env src/server.js",
+    "seed": "node scripts/seed.js",
+    "db:status": "node scripts/db-status.js",
+    "import": "node scripts/import.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "csv-parse": "^6.2.1",
+    "dotenv": "^16.4.5",
+    "express": "^5.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.5.0",
+    "pg": "^8.23.1"
+  }
+}
