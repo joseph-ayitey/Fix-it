@@ -77,11 +77,11 @@ function cleanOriginalName(name) {
 export async function storePhotos(files = []) {
   if (!files.length) return [];
 
-  const checked = files.map((f, i) => {
+  const checked = files.map((f) => {
     const type = detectImageType(f.buffer);
     if (!type) {
       throw badRequest(`"${cleanOriginalName(f.originalname)}" isn't a JPEG, PNG, WebP or GIF image`, [
-        { field: `photos[${i}]`, message: "must be a JPEG, PNG, WebP or GIF image" },
+        { field: "photos", message: `"${cleanOriginalName(f.originalname)}" must be a JPEG, PNG, WebP or GIF image` },
       ]);
     }
     return { file: f, type };

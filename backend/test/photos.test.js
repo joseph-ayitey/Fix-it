@@ -70,6 +70,7 @@ test("a file that only pretends to be an image is rejected, and nothing is saved
   });
   assert.equal(res.status, 400);
   assert.match(res.body.detail, /evil\.png/);
+  assert.deepEqual(res.body.errors.map((e) => e.field), ["photos"], "the contract's field name for photo problems");
   assert.equal(filesOnDisk(), before, "the valid photo in the same request must not be left on disk either");
 
   const list = await ctx.api("GET", "/issues", { token: tenant.token });
@@ -82,6 +83,7 @@ test("too many photos is a clear 400; an invalid report stores no files", async 
   const tooMany = await ctx.upload("/issues", { token: tenant.token, fields: ISSUE_FIELDS, files: six });
   assert.equal(tooMany.status, 400);
   assert.match(tooMany.body.detail, /at most 5 photos/);
+  assert.equal(tooMany.body.errors[0].field, "photos");
 
   const badFields = await ctx.upload("/issues", { token: tenant.token, fields: { ...ISSUE_FIELDS, category: "nope" }, files: [{ data: TINY_PNG }] });
   assert.equal(badFields.status, 400);

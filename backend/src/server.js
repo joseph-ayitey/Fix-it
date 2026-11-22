@@ -87,7 +87,9 @@ export function createApp({ geocoder = noGeocoder, logError = console.error, val
       body = problem(400, { detail: "the request body is not valid JSON", instance });
     } else if (err instanceof multer.MulterError) {
       status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
-      body = problem(status, { detail: describeMulterError(err), instance });
+      const detail = describeMulterError(err);
+      // A 400 is a validation error, so it names the field (contract: FieldError.field).
+      body = problem(status, { detail, instance, errors: status === 400 ? [{ field: "photos", message: detail }] : undefined });
     } else if (Array.isArray(err.errors) && err.status && err.status < 500) {
       // From the contract validator.
       status = err.status;
