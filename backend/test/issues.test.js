@@ -44,7 +44,7 @@ test("reporting needs a current tenancy, valid fields, and the tenant role", asy
   assert.equal((await report({}, landlord)).status, 403, "landlords don't report issues");
   const bad = await report({ category: "magic", title: "" });
   assert.equal(bad.status, 400);
-  assert.deepEqual(bad.body.error.details.map((d) => d.field).sort(), ["category", "title"]);
+  assert.deepEqual(bad.body.errors.map((d) => d.field).sort(), ["category", "title"]);
 });
 
 test("the landlord's first comment records acknowledgement time", async () => {
@@ -124,26 +124,26 @@ test("visibility: tenants see only their own reports; other landlords see nothin
   const { body: theirs } = await report({ title: "Flatmate's issue" }, flatmate);
 
   const mine = await ctx.api("GET", "/issues", { token: tenant.token });
-  assert.ok(!mine.body.some((i) => i.id === theirs.id));
+  assert.ok(!mine.body.items.some((i) => i.id === theirs.id));
   assert.equal((await ctx.api("GET", `/issues/${theirs.id}`, { token: tenant.token })).status, 404);
 
   const all = await ctx.api("GET", "/issues", { token: landlord.token });
-  assert.ok(all.body.some((i) => i.id === theirs.id), "the landlord sees every issue on their property");
+  assert.ok(all.body.items.some((i) => i.id === theirs.id), "the landlord sees every issue on their property");
 
   const otherLandlord = await ctx.signUp("landlord");
-  assert.deepEqual((await ctx.api("GET", "/issues", { token: otherLandlord.token })).body, []);
+  assert.deepEqual((await ctx.api("GET", "/issues", { token: otherLandlord.token })).body.items, []);
   assert.equal((await ctx.api("GET", `/issues/${theirs.id}`, { token: otherLandlord.token })).status, 404);
 });
 
 test("the landlord inbox puts active urgent issues first and supports filters", async () => {
   const { body: low } = await report({ title: "Low priority", urgency: "low" });
   const list = await ctx.api("GET", "/issues?status=active", { token: landlord.token });
-  assert.ok(list.body.every((i) => ["open", "in_progress"].includes(i.status)));
-  assert.equal(list.body[0].urgency, "urgent");
-  assert.equal(list.body.at(-1).id, low.id);
+  assert.ok(list.body.items.every((i) => ["open", "in_progress"].includes(i.status)));
+  assert.equal(list.body.items[0].urgency, "urgent");
+  assert.equal(list.body.items.at(-1).id, low.id);
 
   const byProperty = await ctx.api(`GET`, `/issues?propertyId=${property.id}&status=closed`, { token: landlord.token });
-  assert.ok(byProperty.body.every((i) => i.status === "closed"));
+  assert.ok(byProperty.body.items.every((i) => i.status === "closed"));
   assert.equal((await ctx.api("GET", "/issues?status=bogus", { token: landlord.token })).status, 400);
 });
 
@@ -155,5 +155,5 @@ test("summary counts what needs attention, and property counts track open issues
   assert.ok(summary.body.unacknowledged >= 1);
 
   const props = await ctx.api("GET", "/properties", { token: landlord.token });
-  assert.equal(props.body[0].openIssueCount, summary.body.active);
+  assert.equal(props.body.items[0].openIssueCount, summary.body.active);
 });

@@ -69,11 +69,11 @@ test("a file that only pretends to be an image is rejected, and nothing is saved
     ],
   });
   assert.equal(res.status, 400);
-  assert.match(res.body.error.message, /evil\.png/);
+  assert.match(res.body.detail, /evil\.png/);
   assert.equal(filesOnDisk(), before, "the valid photo in the same request must not be left on disk either");
 
   const list = await ctx.api("GET", "/issues", { token: tenant.token });
-  assert.ok(!list.body.some((i) => i.title === "Sneaky upload"), "the issue must not be created");
+  assert.ok(!list.body.items.some((i) => i.title === "Sneaky upload"), "the issue must not be created");
 });
 
 test("too many photos is a clear 400; an invalid report stores no files", async () => {
@@ -81,7 +81,7 @@ test("too many photos is a clear 400; an invalid report stores no files", async 
   const six = Array.from({ length: 6 }, () => ({ data: TINY_PNG }));
   const tooMany = await ctx.upload("/issues", { token: tenant.token, fields: ISSUE_FIELDS, files: six });
   assert.equal(tooMany.status, 400);
-  assert.match(tooMany.body.error.message, /at most 5 photos/);
+  assert.match(tooMany.body.detail, /at most 5 photos/);
 
   const badFields = await ctx.upload("/issues", { token: tenant.token, fields: { ...ISSUE_FIELDS, category: "nope" }, files: [{ data: TINY_PNG }] });
   assert.equal(badFields.status, 400);
@@ -92,7 +92,7 @@ test("a photo larger than 8 MB gets a 413", async () => {
   const big = Buffer.concat([TINY_PNG, Buffer.alloc(8 * 1024 * 1024)]);
   const res = await ctx.upload("/issues", { token: tenant.token, fields: ISSUE_FIELDS, files: [{ data: big }] });
   assert.equal(res.status, 413);
-  assert.match(res.body.error.message, /8 MB/);
+  assert.match(res.body.detail, /8 MB/);
 });
 
 test("the landlord can post a photo-only comment (e.g. the finished repair)", async () => {

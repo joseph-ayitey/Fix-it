@@ -7,6 +7,7 @@
 import { randomInt } from "node:crypto";
 import { iso, many, one, params, PG, query } from "../db/index.js";
 import { conflict, notFound } from "../utils/errors.js";
+import { decodeCursor, DEFAULT_LIMIT, toPage } from "../utils/pagination.js";
 
 // No 0/O/1/I/L: codes get read out over the phone and typed from a text message.
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -80,11 +81,27 @@ function toProperty(row, viewer) {
   };
 }
 
-export async function listPropertiesFor(viewer) {
+/**
+ * One page of the properties `viewer` may see, newest first.
+ * @returns {Promise<{ items: object[], page: { limit, nextCursor, hasMore } }>}
+ */
+export async function listPropertiesFor(viewer, { q = null, limit = DEFAULT_LIMIT, cursor = null } = {}) {
   const p = params();
-  const order = viewer.role === "landlord" ? "urgent_issue_count DESC, open_issue_count DESC, p.created_at DESC" : "p.created_at DESC";
-  const rows = await many(`${SELECT} WHERE ${visibleTo(viewer, p)} ORDER BY ${order}, p.id DESC`, p.values);
-  return rows.map((r) => toProperty(r, viewer));
+  const where = [visibleTo(viewer, p)];
+  if (q) {
+    const like = p(`%${q.replace(/[\\%_]/g, "\\$&")}%`);
+    where.push(`(p.label ILIKE ${like} OR p.address_input ILIKE ${like} OR p.display_name ILIKE ${like})`);
+  }
+  const afterId = decodeCursor(cursor, "newest");
+  if (afterId) {
+    if (!(await one(`SELECT 1 FROM properties WHERE id = $1`, [afterId]))) decodeCursor("invalid", "newest"); // throws 400
+    where.push(`(p.created_at, p.id) < (SELECT c.created_at, c.id FROM properties c WHERE c.id = ${p(afterId)})`);
+  }
+  const rows = await many(
+    `${SELECT} WHERE ${where.join(" AND ")} ORDER BY p.created_at DESC, p.id DESC LIMIT ${p(limit + 1)}`,
+    p.values,
+  );
+  return toPage(rows, limit, "newest", (r) => toProperty(r, viewer));
 }
 
 /** The property row if `viewer` may see it, else 404. `q` = a transaction client, optionally. */

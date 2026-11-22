@@ -35,7 +35,7 @@ const offer = (issueId, workerId, message = "Can you come today?") =>
 
 async function pendingOfferId(worker, issueId) {
   const { body } = await ctx.api("GET", "/offers", { token: worker.token });
-  return body.find((o) => o.issue.id === issueId && o.status === "pending")?.id;
+  return body.items.find((o) => o.issue.id === issueId && o.status === "pending")?.id;
 }
 
 async function hire(issueId, worker) {
@@ -63,12 +63,12 @@ test("workers must pick a trade when signing up; only workers have one", async (
 test("the directory finds workers by trade without exposing contact details", async () => {
   const plumbers = await ctx.api("GET", "/team/directory?trade=plumber&city=Barcelona", { token: landlord.token });
   assert.equal(plumbers.status, 200);
-  const marc = plumbers.body.find((w) => w.id === plumber.user.id);
+  const marc = plumbers.body.items.find((w) => w.id === plumber.user.id);
   assert.equal(marc.name, "Marc R.", "not yet working together: short name only");
   assert.equal(marc.tradeLabel, "Plumber");
   assert.equal(marc.inArea, true);
   assert.equal(marc.email, undefined);
-  assert.ok(plumbers.body.every((w) => w.trade === "plumber"));
+  assert.ok(plumbers.body.items.every((w) => w.trade === "plumber"));
 
   assert.equal((await ctx.api("GET", "/team/directory", { token: tenant.token })).status, 403);
   assert.equal((await ctx.api("GET", "/team/directory?trade=astronaut", { token: landlord.token })).status, 400);
@@ -83,7 +83,7 @@ test("an offer doesn't assign anyone: the worker sees a preview, without the add
   assert.ok(sent.body.acknowledgedAt, "sending an offer counts as the landlord responding");
 
   const inbox = await ctx.api("GET", "/offers", { token: plumber.token });
-  const preview = inbox.body.find((o) => o.issue.id === issue.id);
+  const preview = inbox.body.items.find((o) => o.issue.id === issue.id);
   assert.equal(preview.status, "pending");
   assert.equal(preview.message, "Urgent leak, tenant home after 5");
   assert.equal(preview.issue.title, "Kitchen tap leaking");
@@ -105,8 +105,8 @@ test("accepting assigns the worker, adds them to the landlord's workers, and tel
   assert.equal(accepted.body.assignee.id, plumber.user.id);
   assert.equal(accepted.body.property.address, "Worker street 1, Barcelona", "now they get the address");
 
-  const team = await ctx.api("GET", "/team", { token: landlord.token });
-  assert.ok(team.body.workers.some((w) => w.id === plumber.user.id && w.name === "Marc Ribas"));
+  const team = await ctx.api("GET", "/team/workers", { token: landlord.token });
+  assert.ok(team.body.items.some((w) => w.id === plumber.user.id && w.name === "Marc Ribas"));
 
   const tenantView = await ctx.api("GET", `/issues/${issue.id}`, { token: tenant.token });
   assert.deepEqual(tenantView.body.assignee, { id: plumber.user.id, name: "Marc R.", trade: "plumber", tradeLabel: "Plumber" });
@@ -117,7 +117,7 @@ test("accepting assigns the worker, adds them to the landlord's workers, and tel
   assert.equal(workerView.body.reporter.name, "Anna S.", "workers see tenants by short name too");
 
   const inbox = await ctx.api("GET", "/offers", { token: plumber.token });
-  const acceptedOffer = inbox.body.find((o) => o.issue.id === issue.id && o.status === "accepted");
+  const acceptedOffer = inbox.body.items.find((o) => o.issue.id === issue.id && o.status === "accepted");
   const again = await ctx.api("POST", `/offers/${acceptedOffer.id}/accept`, { token: plumber.token });
   assert.equal(again.status, 409, "an answered offer can't be answered twice");
 });
@@ -242,7 +242,7 @@ test("removing a worker unassigns their active jobs and cancels pending offers",
   const waiting = await report("Gutter overflowing", "structural");
   await offer(waiting.id, leaver.user.id);
 
-  const res = await ctx.api("DELETE", `/team/${leaver.user.id}`, { token: landlord.token });
+  const res = await ctx.api("DELETE", `/team/workers/${leaver.user.id}`, { token: landlord.token });
   assert.deepEqual(res.body, { unassignedIssues: 1 });
   assert.equal((await ctx.api("GET", `/issues/${active.id}`, { token: landlord.token })).body.assignee, null);
   assert.equal((await ctx.api("GET", `/issues/${active.id}`, { token: leaver.token })).status, 404);
@@ -252,5 +252,5 @@ test("removing a worker unassigns their active jobs and cancels pending offers",
 test("a wrong-role request says who you're signed in as", async () => {
   const res = await ctx.api("POST", "/properties", { token: tenant.token, body: { address: "Somewhere 12, Town" } });
   assert.equal(res.status, 403);
-  assert.match(res.body.error.message, /signed in as Anna Soler \(tenant\)/);
+  assert.match(res.body.detail, /signed in as Anna Soler \(tenant\)/);
 });

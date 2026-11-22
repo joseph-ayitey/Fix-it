@@ -22,7 +22,7 @@ test("adding the same address twice is a 409, not a duplicate", async () => {
   const body = { address: "Carrer de Balmes 150, Barcelona" };
   assert.equal((await ctx.api("POST", "/properties", { token: landlord.token, body })).status, 201);
   assert.equal((await ctx.api("POST", "/properties", { token: landlord.token, body })).status, 409);
-  assert.equal((await ctx.api("GET", "/properties", { token: landlord.token })).body.length, 1);
+  assert.equal((await ctx.api("GET", "/properties", { token: landlord.token })).body.items.length, 1);
 });
 
 test("a failed or no-match geocode still saves the property, and can be retried", async () => {
@@ -61,7 +61,7 @@ test("a tenant joins with the code (any case, with dashes), and sees the propert
   assert.equal(again.status, 200, "joining twice is harmless");
 
   const list = await ctx.api("GET", "/properties", { token: tenant.token });
-  assert.deepEqual(list.body.map((p) => p.id), [property.id]);
+  assert.deepEqual(list.body.items.map((p) => p.id), [property.id]);
 
   const detail = await ctx.api("GET", `/properties/${property.id}`, { token: landlord.token });
   assert.deepEqual(detail.body.tenants.map((t) => t.id), [tenant.user.id]);
@@ -89,7 +89,7 @@ test("other people's properties are invisible (404), not just forbidden", async 
   assert.equal((await ctx.api("GET", `/properties/${property.id}`, { token: otherLandlord.token })).status, 404);
   assert.equal((await ctx.api("GET", `/properties/${property.id}`, { token: stranger.token })).status, 404);
   assert.equal((await ctx.api("POST", `/properties/${property.id}/join-code`, { token: otherLandlord.token })).status, 404);
-  assert.equal((await ctx.api("GET", "/properties/abc", { token: owner.token })).status, 404);
+  assert.equal((await ctx.api("GET", "/properties/abc", { token: owner.token })).status, 400, "a malformed id is a bad request");
 });
 
 test("a landlord can rename a property and remove a tenant", async () => {

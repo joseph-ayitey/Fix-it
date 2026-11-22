@@ -2,14 +2,20 @@
 // FixIt API. `npm run dev` restarts on changes to src/ or .env; `npm start` for plain runs.
 //
 // createApp() is exported separately from the startup code so the tests can build the
-// app with an in-memory database and a fake geocoder, without opening a port or
-// reading .env.
+// app with a throwaway database and a fake geocoder, without opening a port.
+//
+// The contract: openapi.yaml. express-openapi-validator checks every request against it
+// before any route runs (wrong field -> 400 Problem Details), and, outside production,
+// every JSON response too, so the code can't drift away from what the contract promises.
 
 import "dotenv/config";
 import express from "express";
 import multer from "multer";
-import { pathToFileURL } from "node:url";
-import { describeMulterError } from "./utils/photos.js";
+import * as OpenApiValidator from "express-openapi-validator";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { acceptPhotos, describeMulterError } from "./utils/photos.js";
+import { fieldErrorsFromValidator, problem } from "./utils/problems.js";
 import { initDb, closeDb } from "./db/index.js";
 import { NominatimClient, noGeocoder } from "./utils/geocode.js";
 import { assertTokenConfig } from "./utils/token.js";
@@ -20,10 +26,45 @@ import issuesRouter from "./routes/issues.js";
 import teamRouter from "./routes/team.js";
 import offersRouter from "./routes/offers.js";
 
-export function createApp({ geocoder = noGeocoder, logError = console.error } = {}) {
+export const OPENAPI_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "openapi.yaml");
+
+/**
+ * @param {{ geocoder?: object, logError?: Function, validateResponses?: boolean }} options
+ *   validateResponses: check every JSON response against the contract. On by default
+ *   outside production (a mismatch is a bug: it fails loudly as a 500).
+ */
+export function createApp({ geocoder = noGeocoder, logError = console.error, validateResponses = process.env.NODE_ENV !== "production" } = {}) {
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "32kb" }));
+
+  // Photo uploads are multipart/form-data. Parse them BEFORE the contract check, so the
+  // validator sees the form fields. (multer ignores JSON requests.)
+  app.post(["/api/issues", "/api/issues/:issueId/comments"], acceptPhotos);
+
+  // Some POSTs have an OPTIONAL body (e.g. accepting an offer, with or without a
+  // message). A request that sends no body at all is valid by the contract, but the
+  // validator would answer 415 because there's no Content-Type. Treat "no body" as an
+  // empty JSON object, which is exactly what the contract allows.
+  app.use((req, _res, next) => {
+    const hasBody = Number(req.headers["content-length"] ?? 0) > 0 || req.headers["transfer-encoding"];
+    if (["POST", "PATCH", "PUT"].includes(req.method) && !hasBody && !req.headers["content-type"]) {
+      req.headers["content-type"] = "application/json";
+      req.body = {};
+    }
+    next();
+  });
+
+  app.use(
+    OpenApiValidator.middleware({
+      apiSpec: OPENAPI_PATH,
+      validateRequests: { allErrors: true, removeAdditional: false },
+      validateResponses: validateResponses ? { removeAdditional: false } : false,
+      validateFormats: true,
+      ignoreUndocumented: false, // a route that isn't in the contract doesn't exist: 404
+      fileUploader: false, // multer above already did it, with our limits and checks
+    }),
+  );
 
   app.use("/api/health", healthRouter({ geocoder }));
   app.use("/api/auth", authRouter);
@@ -32,23 +73,39 @@ export function createApp({ geocoder = noGeocoder, logError = console.error } = 
   app.use("/api/team", teamRouter);
   app.use("/api/offers", offersRouter);
 
-  app.use("/api", (_req, res) => res.status(404).json({ error: { message: "no such endpoint" } }));
-
   // Express 5 sends errors thrown in async handlers here automatically.
   // eslint-disable-next-line no-unused-vars
-  app.use((err, _req, res, _next) => {
+  app.use((err, req, res, _next) => {
+    const instance = req.originalUrl.split("?")[0];
+    let status = 500;
+    let body;
+
     if (err.type === "entity.parse.failed") {
-      return res.status(400).json({ error: { message: "request body is not valid JSON" } });
+      status = 400;
+      body = problem(400, { detail: "the request body is not valid JSON", instance });
+    } else if (err instanceof multer.MulterError) {
+      status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+      body = problem(status, { detail: describeMulterError(err), instance });
+    } else if (Array.isArray(err.errors) && err.status && err.status < 500) {
+      // From the contract validator.
+      status = err.status;
+      const errors = status === 400 ? fieldErrorsFromValidator(err.errors) : undefined;
+      const detail = errors ? errors.map((e) => `${e.field}: ${e.message}`).join("; ") : err.message;
+      body = problem(status, { detail, errors, instance });
+    } else if (err.status && err.status < 500) {
+      // Our own HttpErrors (utils/errors.js).
+      status = err.status;
+      body = problem(status, { detail: err.message, errors: err.details, slug: err.slug, instance });
+    } else {
+      logError(err);
+      body = problem(500, { instance });
     }
-    if (err instanceof multer.MulterError) {
-      const status = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
-      return res.status(status).json({ error: { message: describeMulterError(err) } });
-    }
-    if (err.status && err.status < 500) {
-      return res.status(err.status).json({ error: { message: err.message, ...(err.details ? { details: err.details } : {}) } });
-    }
-    logError(err);
-    return res.status(500).json({ error: { message: "internal server error" } });
+
+    res.status(status).type("application/problem+json");
+    // A 500 isn't declared per operation in the contract, so send it without response
+    // validation (which would only replace this 500 with another one).
+    if (status >= 500) return res.send(JSON.stringify(body));
+    return res.json(body);
   });
 
   return app;

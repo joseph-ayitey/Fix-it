@@ -24,6 +24,7 @@
 // Every change writes its timeline entry in the same transaction as the change itself.
 
 import { iso, many, one, params, query, transaction } from "../db/index.js";
+import { decodeCursor, DEFAULT_LIMIT, toPage } from "../utils/pagination.js";
 import { badRequest, conflict, forbidden, notFound } from "../utils/errors.js";
 import { photoFilePath, removePhotos, storePhotos } from "../utils/photos.js";
 import { nameFor, TRADES } from "../utils/people.js";
@@ -148,11 +149,35 @@ export async function requireIssueAccess(viewer, id, q, { forUpdate = false } = 
 /** Can `viewer` see timeline entries with this visibility? */
 const seesVisibility = (viewer, visibility) => visibility === "shared" || viewer.role !== "tenant";
 
+// Sort orders for the issue list. Each is a list of [SQL expression (for table alias a),
+// direction]; the issue id comes last so the order is total (no ties), which cursor
+// pagination needs.
+const SORTS = {
+  // Active before finished, urgent first, then longest-waiting first.
+  priority: {
+    keys: (a) => [
+      `CASE WHEN ${a}.status IN ('open', 'in_progress') THEN 0 ELSE 1 END`,
+      `CASE ${a}.urgency WHEN 'urgent' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END`,
+      `${a}.created_at`,
+      `${a}.id`,
+    ],
+    dir: "ASC",
+  },
+  newest: { keys: (a) => [`${a}.created_at`, `${a}.id`], dir: "DESC" },
+  updated: { keys: (a) => [`${a}.updated_at`, `${a}.id`], dir: "DESC" },
+};
+
 /**
- * @param {{ status?: string|null, propertyId?: number|null, assignment?: 'assigned'|'unassigned'|null }} filters
+ * One page of the issues `viewer` may see.
+ * @param {{ status?, propertyId?, assignment?, urgency?, category?, q?, sort?, limit?, cursor? }} filters
  *   status: one of STATUSES, or "active" for open + in_progress
+ * @returns {Promise<{ items: object[], page: { limit, nextCursor, hasMore } }>}
  */
-export async function listIssuesFor(viewer, { status, propertyId, assignment } = {}) {
+export async function listIssuesFor(
+  viewer,
+  { status, propertyId, assignment, urgency, category, q, sort = "priority", limit = DEFAULT_LIMIT, cursor = null } = {},
+) {
+  const order = SORTS[sort] ?? SORTS.priority;
   const p = params();
   const where = [visibleTo(viewer, p)];
 
@@ -161,17 +186,27 @@ export async function listIssuesFor(viewer, { status, propertyId, assignment } =
   if (propertyId) where.push(`i.property_id = ${p(propertyId)}`);
   if (assignment === "unassigned") where.push("i.assigned_worker_id IS NULL");
   if (assignment === "assigned") where.push("i.assigned_worker_id IS NOT NULL");
+  if (urgency) where.push(`i.urgency = ${p(urgency)}`);
+  if (category) where.push(`i.category = ${p(category)}`);
+  if (q) {
+    const like = p(`%${q.replace(/[\\%_]/g, "\\$&")}%`);
+    where.push(`(i.title ILIKE ${like} OR i.description ILIKE ${like})`);
+  }
 
-  // Active before finished; urgent first; then longest-waiting first.
+  const afterId = decodeCursor(cursor, sort);
+  if (afterId) {
+    if (!(await one(`SELECT 1 FROM issues WHERE id = $1`, [afterId]))) decodeCursor("invalid", sort); // throws 400
+    // "Rows that sort after the cursor's row": compare the whole sort key as a tuple.
+    where.push(`(${order.keys("i").join(", ")}) ${order.dir === "ASC" ? ">" : "<"} (SELECT ${order.keys("c").join(", ")} FROM issues c WHERE c.id = ${p(afterId)})`);
+  }
+
   const rows = await many(
     `${SELECT} WHERE ${where.join(" AND ")}
-     ORDER BY CASE WHEN i.status IN ('open', 'in_progress') THEN 0 ELSE 1 END,
-              CASE i.urgency WHEN 'urgent' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,
-              CASE WHEN i.status IN ('open', 'in_progress') THEN i.created_at END ASC,
-              i.updated_at DESC, i.id`,
+     ORDER BY ${order.keys("i").map((k) => `${k} ${order.dir}`).join(", ")}
+     LIMIT ${p(limit + 1)}`,
     p.values,
   );
-  return rows.map((r) => toIssue(r, viewer));
+  return toPage(rows, limit, sort, (r) => toIssue(r, viewer));
 }
 
 export async function getIssueFor(viewer, id) {
@@ -433,17 +468,30 @@ export async function unassignIssue(landlord, id, { note } = {}) {
 
 /** Headline numbers for the dashboard. */
 export async function summaryFor(viewer) {
-  const issues = await listIssuesFor(viewer, {});
-  const active = issues.filter((i) => ACTIVE_STATUSES.includes(i.status));
-  const resolved = issues.filter((i) => i.status === "resolved");
+  // One query, counted by the database, instead of loading every issue.
+  const p = params();
+  const yourConfirmation =
+    viewer.role === "landlord" ? "i.landlord_confirmed_at IS NULL" : viewer.role === "tenant" ? "i.tenant_confirmed_at IS NULL" : "false";
+  const counts = await one(
+    `SELECT
+       count(*) FILTER (WHERE i.status IN ('open', 'in_progress'))::int AS active,
+       count(*) FILTER (WHERE i.status IN ('open', 'in_progress') AND i.urgency = 'urgent')::int AS urgent,
+       count(*) FILTER (WHERE i.status IN ('open', 'in_progress') AND i.acknowledged_at IS NULL)::int AS unacknowledged,
+       count(*) FILTER (WHERE i.status IN ('open', 'in_progress') AND i.assigned_worker_id IS NULL)::int AS unassigned,
+       count(*) FILTER (WHERE i.status = 'resolved')::int AS awaiting_confirmation,
+       count(*) FILTER (WHERE i.status = 'resolved' AND ${yourConfirmation})::int AS needs_your_confirmation
+     FROM issues i JOIN properties p ON p.id = i.property_id
+     WHERE ${visibleTo(viewer, p)}`,
+    p.values,
+  );
   const summary = {
-    active: active.length,
-    urgent: active.filter((i) => i.urgency === "urgent").length,
-    unacknowledged: active.filter((i) => !i.acknowledgedAt).length,
-    unassigned: active.filter((i) => !i.assignee).length,
-    awaitingConfirmation: resolved.length,
+    active: counts.active,
+    urgent: counts.urgent,
+    unacknowledged: counts.unacknowledged,
+    unassigned: counts.unassigned,
+    awaitingConfirmation: counts.awaiting_confirmation,
     // Resolved issues waiting for YOUR confirmation (tenant: "it works"; landlord: approve).
-    needsYourConfirmation: resolved.filter((i) => i.canConfirm).length,
+    needsYourConfirmation: counts.needs_your_confirmation,
   };
   if (viewer.role === "worker") {
     summary.pendingOffers = (await one(`SELECT count(*)::int AS n FROM job_offers WHERE worker_id = $1 AND status = 'pending'`, [viewer.id])).n;
