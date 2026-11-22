@@ -44,6 +44,8 @@ tags:
     description: Landlords offering a job to a worker, and the worker's answer.
   - name: Team
     description: Who works with whom, and the worker directory.
+  - name: Dashboard
+    description: Statistics and a live activity feed for the dashboard (decision record 0004).
 
 paths:
   /health:
@@ -756,6 +758,47 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /dashboard/stats:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardStats
+      summary: Statistics for your dashboard
+      description: |
+        Counts by status, category and urgency; median response and close times over the
+        last 90 days; and issues reported vs closed per week for the last 12 weeks. Scoped
+        to the issues you can see. Added by decision record 0004.
+      responses:
+        "200":
+          description: Your statistics.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DashboardStats" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /dashboard/activity:
+    get:
+      tags: [Dashboard]
+      operationId: listActivity
+      summary: Recent activity across your issues
+      description: |
+        The latest timeline events on issues you can see, newest first. Tenants never see
+        private (`internal`) events. Poll it to keep a live feed up to date. Added by
+        decision record 0004.
+      parameters:
+        - name: limit
+          in: query
+          description: Page size.
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of events.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActivityPage" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1450,3 +1493,124 @@ components:
       additionalProperties: false
       properties:
         unassignedIssues: { type: integer, minimum: 0 }
+
+    # ---------- Dashboard (decision record 0004) ----------
+    StatusCounts:
+      type: object
+      required: [open, in_progress, resolved, closed]
+      additionalProperties: false
+      properties:
+        open: { type: integer, minimum: 0 }
+        in_progress: { type: integer, minimum: 0 }
+        resolved: { type: integer, minimum: 0 }
+        closed: { type: integer, minimum: 0 }
+    DashboardStats:
+      type: object
+      required: [total, byStatus, byUrgency, byCategory, responseTimes, weekly]
+      additionalProperties: false
+      properties:
+        total: { type: integer, minimum: 0, description: Every issue you can see. }
+        byStatus: { $ref: "#/components/schemas/StatusCounts" }
+        byUrgency:
+          type: object
+          description: Active issues (open or in progress) by urgency.
+          required: [low, normal, urgent]
+          additionalProperties: false
+          properties:
+            low: { type: integer, minimum: 0 }
+            normal: { type: integer, minimum: 0 }
+            urgent: { type: integer, minimum: 0 }
+        byCategory:
+          type: array
+          description: Every category, including those with no issues.
+          items:
+            type: object
+            required: [category, active, total]
+            additionalProperties: false
+            properties:
+              category: { $ref: "#/components/schemas/Category" }
+              active: { type: integer, minimum: 0 }
+              total: { type: integer, minimum: 0 }
+        responseTimes:
+          type: object
+          description: Over issues reported in the last 90 days. `null` when there's nothing to measure yet.
+          required: [windowDays, medianHoursToFirstResponse, medianHoursToClose, respondedCount, closedCount]
+          additionalProperties: false
+          properties:
+            windowDays: { type: integer, enum: [90] }
+            medianHoursToFirstResponse: { type: [number, "null"], minimum: 0 }
+            medianHoursToClose: { type: [number, "null"], minimum: 0 }
+            respondedCount: { type: integer, minimum: 0, description: Issues the median response time is based on. }
+            closedCount: { type: integer, minimum: 0, description: Issues the median close time is based on. }
+        weekly:
+          type: array
+          description: The last 12 weeks, oldest first. Weeks start on Monday (UTC).
+          minItems: 12
+          maxItems: 12
+          items:
+            type: object
+            required: [weekStart, reported, closed]
+            additionalProperties: false
+            properties:
+              weekStart: { type: string, format: date, example: "2026-11-16" }
+              reported: { type: integer, minimum: 0 }
+              closed: { type: integer, minimum: 0 }
+    ActivityEvent:
+      type: object
+      required: [id, type, visibility, createdAt, actor, subject, toStatus, excerpt, photoCount, issue]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        type:
+          type: string
+          enum: [reported, comment, status_change, assigned, unassigned, confirmed,
+                 offer_sent, offer_accepted, offer_declined, offer_withdrawn]
+        visibility: { $ref: "#/components/schemas/Visibility" }
+        createdAt: { type: string, format: date-time }
+        actor:
+          type: object
+          required: [id, name, role]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            role: { $ref: "#/components/schemas/Role" }
+        subject:
+          description: For assignments and offers, the worker it's about.
+          oneOf:
+            - type: object
+              required: [id, name, tradeLabel]
+              additionalProperties: false
+              properties:
+                id: { type: integer }
+                name: { type: string }
+                tradeLabel: { type: [string, "null"] }
+            - { type: "null" }
+        toStatus:
+          oneOf:
+            - { $ref: "#/components/schemas/IssueStatus" }
+            - { type: "null" }
+        excerpt:
+          type: [string, "null"]
+          maxLength: 141
+          description: The first 140 characters of the event's text (with … if cut), or null.
+        photoCount: { type: integer, minimum: 0 }
+        issue:
+          type: object
+          required: [id, title, urgency, status, propertyLabel]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            title: { type: string }
+            urgency: { $ref: "#/components/schemas/Urgency" }
+            status: { $ref: "#/components/schemas/IssueStatus" }
+            propertyLabel: { type: string, description: "The property's label, or its address if it has none." }
+    ActivityPage:
+      type: object
+      required: [items, page]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ActivityEvent" }
+        page: { $ref: "#/components/schemas/PageInfo" }
