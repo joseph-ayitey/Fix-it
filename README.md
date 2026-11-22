@@ -51,6 +51,8 @@ FIX-IT/
         └── test/              Vitest tests + helpers
 ```
 
+**Diagrams and an architecture review:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 How a request travels: **page** (`frontend/src/pages`) → **`api.js`** → Vite forwards
 `/api` → **route** (`backend/src/routes`) checks the sign-in and the input → **model**
 (`backend/src/models`) applies the rules and runs SQL → **PostgreSQL** in Docker. The
@@ -89,3 +91,55 @@ tab has its own sign-in. (`npm run seed` creates demo accounts instead, all with
 cd backend && npm test     # 66 tests against real PostgreSQL (needs `docker compose up -d db`)
 cd frontend && npm test    # 29 tests, offline (jsdom, fake fetch)
 ```
+
+## What's next: roadmap
+
+FixIt works end to end locally. These are the steps to make it safe for real users,
+ready to run in production, and able to pay workers through Stripe. Each phase builds on
+the one before it. The reasons, and the design of the bigger items, are in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#roadmap-what-to-fix-and-in-which-order).
+
+### Phase 0: safety net (small, do first)
+- [ ] **CI:** a GitHub Actions workflow that starts PostgreSQL and runs both test suites on every push
+- [ ] **ESLint + Prettier**, checked in CI
+- [ ] **One list of trades and photo limits** shared by frontend and backend (no copies to drift apart)
+- [ ] **Protect the timeline in the database:** a trigger that refuses `UPDATE`/`DELETE` on `issue_events`
+- [ ] **Guard `npm run seed -- --reset`:** development only, and ask before emptying tables
+
+### Phase 1: protect accounts
+- [ ] **Rate limiting** (`express-rate-limit`) on login, sign-up and join codes
+- [ ] **Security headers** (`helmet`, Content-Security-Policy)
+- [ ] **Sending email:** one mail service (Resend or Postmark in production; Mailpit in Docker for local testing). Verification, password reset and notifications all depend on it
+- [ ] **Verify email addresses** before an account can send job offers
+- [ ] **Password reset** with a short-lived, single-use emailed link
+- [ ] **Safer sessions** (JWT stays, used better):
+  - [ ] short-lived access token (15 min), kept in memory, never in browser storage
+  - [ ] refresh token in an `httpOnly`, `Secure`, `SameSite` cookie, so JavaScript can't read it
+  - [ ] refresh tokens rotated on every use and stored hashed in a `refresh_tokens` table, so "log out" and "log out everywhere" really work
+  - [ ] CSRF protection for the cookie (SameSite plus an Origin check)
+- [ ] **Optional:** two-factor sign-in (TOTP app) for landlords and workers, who will handle money
+
+### Phase 2: growth and the user experience
+- [ ] **Pagination** on issue and property lists; the dashboard summary computed by one SQL query
+- [ ] **Email notifications:** new job offer, offer answered, worker assigned, "please confirm the fix"
+- [ ] **Job offers expire** (e.g. after 48 hours), so a forgotten offer doesn't block an issue
+- [ ] **Workers choose whether they appear in the directory**, and landlords get a daily offer limit
+
+### Phase 3: ready for production
+- [ ] **Background jobs** (`pg-boss`, a queue stored in PostgreSQL) for geocoding and emails, so requests never wait on OpenStreetMap, with one shared 1-request/second limit
+- [ ] **Photos in object storage** (S3 or Cloudflare R2; MinIO in Docker locally), served through short-lived links
+- [ ] **Structured logs** (`pino`) with a request id per request
+- [ ] **Split the biggest files:** `services/` (who may do what) apart from `repositories/` (SQL only); `IssueDetailPage` into one file per panel
+- [ ] **Serve the built frontend** from the API (one origin), then **deploy** behind HTTPS
+- [ ] **Browser tests** (Playwright) for the main journey: report → offer → accept → fix → confirm
+
+### Phase 4: landlords pay workers (Stripe Connect)
+Needs phases 1 and 3 first: verified accounts, HTTPS (Stripe must reach your webhook)
+and background jobs.
+- [ ] **Workers connect a payout account** with Stripe Connect (Express). Stripe checks their identity and pays them out; FixIt never sees bank details
+- [ ] **Price on the job:** the offer (or the worker's quote) carries an amount the landlord agrees to
+- [ ] **Pay on approval:** when the landlord approves the work, they pay through Stripe Checkout, and Stripe sends the money to the worker's account (optionally minus a platform fee)
+- [ ] **Webhooks decide what's paid:** the payment counts only once Stripe confirms it (`payment_intent.succeeded`, signature verified), never because the browser says so
+- [ ] **A `payments` table** and timeline entries ("Maria paid Marc R. 85 EUR"), with refunds and disputes handled
+- [ ] **Later:** hold the payment when the offer is accepted and release it when both confirm (escrow-style)
+- [ ] **Develop in Stripe test mode**, with `stripe listen` forwarding webhooks to your machine
