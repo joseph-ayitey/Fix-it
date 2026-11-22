@@ -18,8 +18,9 @@ object, sent as `application/problem+json`:
   `status`, never on the wording of `detail`.
 - `title` is the same for every problem of that type; `detail` explains this occurrence.
 - `errors` appears only on validation errors: one entry per invalid field. `field` is the
-  field name (`title`), or `query.limit` / `path.issueId` / `header.idempotency-key` for
-  other parts of the request.
+  body or form field's name (`title`), **also when the field is missing**; other parts
+  of the request are prefixed: `query.limit`, `path.issueId`, `header.idempotency-key`.
+  Problems with uploaded photos use `photos`, and the message names the file.
 
 ## validation-error
 **400.** The request doesn't match the contract (`openapi.yaml`): a missing or invalid

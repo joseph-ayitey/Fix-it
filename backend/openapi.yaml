@@ -922,7 +922,13 @@ components:
       type: object
       required: [field, message]
       properties:
-        field: { type: string, description: "The field, as a dotted path (e.g. `title`, `query.limit`)." }
+        field:
+          type: string
+          description: |
+            Which input is wrong. A body or form field by its name (`title`), also when it is
+            missing; other parts of the request with a prefix: `query.limit`, `path.issueId`,
+            `header.idempotency-key`. Problems with uploaded photos use `photos` (the message
+            names the file).
         message: { type: string }
 
     # ---------- Enums ----------
@@ -1287,7 +1293,7 @@ components:
               items: { $ref: "#/components/schemas/IssueEvent" }
             offers:
               type: array
-              description: Landlords only.
+              description: Landlords only. Newest first, so the first item is the latest offer.
               items: { $ref: "#/components/schemas/IssueOffer" }
     IssuePage:
       type: object

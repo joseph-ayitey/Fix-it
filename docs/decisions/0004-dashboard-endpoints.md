@@ -40,5 +40,13 @@ The web app refreshes the feed by polling `GET /dashboard/activity?limit=…` ev
 
 ## Consequences
 - Two more operations (33), validated and tested like the rest.
+- **Known limitation, found while building the UI from the contract:** a poll can't ask
+  for "only what's new" (no `since` parameter, no `ETag`), so each poll downloads the
+  first page again, and if more than `limit` events happen between two polls the client
+  can't know what it missed (the web app then restarts the feed from the newest page).
+  Fine at FixIt's scale; if it isn't, add a `since=<event id>` parameter (a contract
+  change and a new decision record) or move to Server-Sent Events.
+- Lists that need "everything" (the dashboard map) get at most one page of 100 properties;
+  the web app says when there are more. A lightweight map-summary endpoint would lift that.
 - The statistics are computed with SQL aggregates (`count … FILTER`, `percentile_cont`,
   `generate_series`), so the response stays small however many issues exist.
