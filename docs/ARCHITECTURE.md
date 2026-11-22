@@ -45,11 +45,12 @@ Each layer only talks to the one below it. Only `models/` runs SQL: that's the
 
 ```mermaid
 flowchart TB
-    Req(["HTTP request"]) --> Routes
+    Req(["HTTP request"]) --> Contract["openapi.yaml check<br/><i>express-openapi-validator:<br/>invalid request → 400 Problem Details</i>"]
+    Contract --> Routes
 
     subgraph API["backend/src"]
-        Routes["routes/<br/>auth · properties · issues · offers · team · health<br/><i>read the request, validate input, send JSON</i>"]
-        MW["middleware/auth.js<br/><i>token → user, check role</i>"]
+        Routes["routes/<br/>auth · properties · issues · offers · team · dashboard · health<br/><i>read the request, send JSON (checked against the contract in dev/tests)</i>"]
+        MW["middleware/<br/>auth.js: token → user, role<br/>idempotency.js: Idempotency-Key replay"]
         Models["models/  (repository layer)<br/>users · properties · issues · offers · team<br/><i>business rules + all SQL</i>"]
         DBL["db/<br/>pool · transactions · migrate.js · schema.sql · migrations/"]
         Utils["utils/<br/>geocode (API client + parser) · photos · validate · token · people"]
@@ -285,7 +286,7 @@ flowchart LR
 
 ### 🟠 Medium: architecture that won't scale
 
-5. **Lists have no pagination.** `listIssuesFor` and `listPropertiesFor` return
+5. ✅ **Fixed in week 3** (cursor pagination, SQL summary; decision record 0002). Was: **Lists have no pagination.** `listIssuesFor` and `listPropertiesFor` return
    everything, and `summaryFor` loads **every** issue just to count them in JavaScript
    (models/issues.js, `summaryFor`). Fine for 50 issues, slow for 50,000.
    → `LIMIT/OFFSET` (or cursor) pagination on lists; compute the summary with one SQL
@@ -354,7 +355,7 @@ flowchart LR
 | 2 | Open, unverified sign-up; directory open to any landlord | email verification before sending offers; directory opt-in; daily offer limit | 1, 2 |
 | 3 | No security headers; token readable by JavaScript | `helmet` + CSP; refresh token in an `httpOnly` cookie ([design](#planned-safer-accounts)) | 1 |
 | 4 | No password reset | emailed single-use reset link (needs email sending) | 1 |
-| 5 | No pagination; summary loads every issue | `LIMIT` + cursor; one `count(*) FILTER (…)` query | 2 |
+| 5 | No pagination; summary loads every issue | ✅ done in week 3: cursor pagination + one `count(*) FILTER (…)` query | ✅ |
 | 6 | Geocoding inside the request; rate limit per process | `pg-boss` background job with one shared limit | 3 |
 | 7 | Photos on the server's disk | S3 / R2 (MinIO locally), signed links | 3 |
 | 8 | No notifications; offers never expire | email notifications; `expires_at` on offers | 2 |

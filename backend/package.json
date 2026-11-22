@@ -11,7 +11,8 @@
     "seed": "node scripts/seed.js",
     "db:status": "node scripts/db-status.js",
     "import": "node scripts/import.js",
-    "lint:api": "npx -y @redocly/cli@2.82.0 lint openapi.yaml"
+    "lint:api": "npx -y @redocly/cli@2.82.0 lint openapi.yaml",
+    "docs:api": "npx -y @redocly/cli@2.82.0 build-docs openapi.yaml -o api-docs.html"
   },
   "engines": {
     "node": ">=20"

@@ -34,6 +34,7 @@ tenant, not even their photos.
 | 3. Parser: own data model, missing fields, odd formats, one bad record doesn't crash the run | API response: `parseNominatimResult` in [`src/utils/geocode.js`](src/utils/geocode.js). Import file: [`src/import/csvParser.js`](src/import/csvParser.js). Decisions: [below](#parser-decisions) |
 | 4. PostgreSQL in Docker | [`docker-compose.yml`](docker-compose.yml) (service `db`) |
 | Schema: tables, types, keys | [`src/db/schema.sql`](src/db/schema.sql), applied automatically ([migrations](#schema-and-migrations)) |
+| Week 3: OpenAPI contract, linted, enforced on requests and responses | [`openapi.yaml`](openapi.yaml), `npm run lint:api`, [decision records](../docs/decisions/README.md) |
 | Repository layer (one place that reads/writes the DB) | [`src/models/`](src/models) on top of [`src/db/index.js`](src/db/index.js). Routes, the importer and the scripts never write SQL themselves |
 | The import | `npm run import`: [`scripts/import.js`](scripts/import.js) → [`src/import/importProperties.js`](src/import/importProperties.js) |
 | Running the import twice creates no duplicates | upsert on `UNIQUE (landlord_id, address_key)` ([below](#idempotency-running-the-import-twice)), tested in `test/import.test.js` |
@@ -168,6 +169,7 @@ decision:
 | `job_offers` | landlord → worker offers and answers | `id`; FKs; **at most one `pending` offer per issue** (unique partial index) |
 | `issue_events` | the append-only timeline; `visibility` = `shared` or `internal` (landlord + worker only) | `id`; FK `issue_id` |
 | `issue_photos` | photo metadata (files on disk) | `id`; FKs to issue and event |
+| `idempotency_keys` | remembered `Idempotency-Key`s and their responses (24 h) | PK `(user_id, key)` |
 
 Type choices:
 - **`timestamptz`** for every time, so instants compare correctly in any time zone.
@@ -252,45 +254,39 @@ All of these came from real calls during development:
 - **Hand-made test data drifts from reality.** An early fixture's coordinates for Carrer
   de Mallorca 401 were about 1.4 km from what the real API returned.
 
-## API
+## API: the contract is `openapi.yaml`
 
-All endpoints except `/health`, `/auth/register` and `/auth/login` need
-`Authorization: Bearer <token>`. Errors are always `{ "error": { "message", "details?" } }`,
-and `details` lists one entry per invalid field. Other people's properties and issues
-return **404, not 403**, so their ids can't be probed.
+**[`openapi.yaml`](openapi.yaml) (OpenAPI 3.1) is the source of truth** for every endpoint,
+field, status code and error: 33 operations. It was written *before* the code (week 3),
+and the code is held to it:
+- **requests:** `express-openapi-validator` checks every request before any route runs,
+  so a wrong or unknown field is a `400` that lists each problem;
+- **responses:** outside production (in development and in every test), every JSON
+  response is checked too. If the code ever returns something the contract doesn't
+  promise, it fails loudly as a `500` instead of quietly breaking a consumer;
+- **completeness:** `test/contract.test.js` proves every documented operation exists and
+  undocumented routes don't.
 
-| Method & path | Who | What it does |
+```bash
+npm run lint:api      # Redocly lint: the industry-standard checks for an OpenAPI file
+npm run docs:api      # build api-docs.html: browsable docs generated from the contract
+```
+
+Conventions (details in the contract's own description):
+| Topic | Rule | Why |
 | --- | --- | --- |
-| `GET /api/health` | anyone | `{status, database, geocoding}` (503 if Postgres is unreachable) |
-| `POST /api/auth/register` | anyone | `{email, name, password (≥8), role: landlord\|tenant\|worker, trade (workers), area?}` → `201 {token, user}` |
-| `POST /api/auth/login` | anyone | `{email, password}` → `{token, user}` |
-| `GET /api/auth/me` | signed in | the current user |
-| `PATCH /api/auth/me` | signed in | `{name?, trade?, area?}` (trade and area: workers only) |
-| `GET /api/properties` | all | landlord: owned; tenant: joined; worker: where they have an active job |
-| `POST /api/properties` | landlord | `{address, label?}` → geocoded, gets a join code (409 if you already have that address) |
-| `POST /api/properties/join` | tenant | `{code}` → 201 joined / 200 already joined / 404 bad code |
-| `GET /api/properties/:id` | all | landlord also gets `joinCode` and `tenants` |
-| `PATCH /api/properties/:id` | landlord | `{label}` |
-| `POST /api/properties/:id/join-code` | landlord | new code; the old one stops working |
-| `POST /api/properties/:id/geocode` | landlord | retry a failed or no-match map lookup |
-| `DELETE /api/properties/:id/tenants/:tenantId` | landlord | end a tenancy |
-| `GET /api/issues?status=&propertyId=&assignment=` | all | landlord: all on their properties; tenant: own reports; worker: assigned to them |
-| `GET /api/issues/summary` | all | `{active, urgent, unacknowledged, unassigned, awaitingConfirmation, needsYourConfirmation, pendingOffers (workers)}` |
-| `POST /api/issues` | tenant | `{propertyId, title, description, category, urgency?}`, as JSON or multipart with up to 5 `photos` |
-| `GET /api/issues/:id` | all | issue + timeline + `allowedTransitions`, `canConfirm`, `confirmations` (+ `offers` for the landlord) |
-| `POST /api/issues/:id/comments` | all | `{body, visibility?}` and/or `photos`; `visibility: "internal"` = private landlord-worker note |
-| `POST /api/issues/:id/confirm` | tenant, landlord | `{note?}`: tenant "it works" / landlord "work approved". Closes once both have confirmed |
-| `GET /api/issues/:id/photos/:photoId` | all | the image, only for people who can see the issue |
-| `PATCH /api/issues/:id/status` | all | `{status, note?}`, only transitions in `allowedTransitions` |
-| `DELETE /api/issues/:id/assignment` | landlord | take the worker off the issue |
-| `GET /api/team/directory?trade=&city=` | landlord | find workers by trade: short name, trade, area, track record, no contact details |
-| `GET /api/team` | landlord, worker | landlord: workers who accepted their jobs; worker: their landlords |
-| `DELETE /api/team/:workerId` | landlord | stop working with them; their active jobs become unassigned |
-| `POST /api/offers` | landlord | `{issueId, workerId, message?}`: offer an open, unassigned issue to a worker |
-| `GET /api/offers` | worker | your offers: pending first, with a preview of each job |
-| `POST /api/offers/:id/accept` | worker | `{response?}` → you're assigned; returns the full issue |
-| `POST /api/offers/:id/decline` | worker | `{response?}` (a reason helps the landlord) |
-| `POST /api/offers/:id/withdraw` | landlord | take back an unanswered offer |
+| Errors | [RFC 9457 Problem Details](../docs/problems.md), `application/problem+json`, with `errors[{field, message}]` for validation | [decision 0001](../docs/decisions/0001-problem-details-errors.md) |
+| Collections | `{ items, page: { limit, nextCursor, hasMore } }`, cursor pagination (`limit` ≤ 100, `cursor`) | [decision 0002](../docs/decisions/0002-cursor-pagination.md) |
+| Issue list | filters `status`, `propertyId`, `assignment`, `urgency`, `category`, `q`; `sort` = priority, newest or updated | |
+| Creating issues | idempotent with an `Idempotency-Key` header: a retry returns the same issue (`Idempotent-Replayed: true`) | [decision 0003](../docs/decisions/0003-idempotency-keys.md) |
+| Dashboard | `GET /dashboard/stats` and `GET /dashboard/activity`, added for the week-3 dashboard | [decision 0004](../docs/decisions/0004-dashboard-endpoints.md) |
+| Nullable fields | `type: [string, "null"]`: always present, `null` = "we don't have this" | |
+| Privacy | other people's data is `404`, not `403`, so ids can't be probed | |
+| Status codes | `201` + `Location` on create, `204` when there's nothing to return, `400`, `401`, `403`, `404`, `405`, `409`, `413`, `415`, `422` | |
+
+**Changing the API:** edit `openapi.yaml` first, run `npm run lint:api`, write a decision
+record in [`docs/decisions/`](../docs/decisions/README.md) if it's a design choice, and
+only then change the code. The tests fail if the code and the contract disagree.
 
 **Issue lifecycle.** Only the transitions in `allowedTransitions` are accepted:
 
@@ -313,7 +309,7 @@ docker compose up -d db   # tests use the real PostgreSQL
 npm test
 ```
 
-66 tests. Each test file gets its own temporary Postgres schema, migrated from scratch and
+91 tests. Each test file gets its own temporary Postgres schema, migrated from scratch and
 dropped afterwards, so tests use the real SQL, never touch your data, and run in parallel.
 OpenStreetMap is replaced by a fake, so tests make no network calls. They cover:
 - the API client (retries, timeouts, rate limit, parsing);
@@ -322,7 +318,10 @@ OpenStreetMap is replaced by a fake, so tests make no network calls. They cover:
 - authentication, properties and join codes;
 - the full issue lifecycle and who may do what;
 - trades, the worker directory, job offers, private notes, name privacy, and the two-sided confirmation;
-- photo uploads.
+- photo uploads;
+- the contract itself: completeness, Problem Details, cursor pagination, nullable fields;
+- idempotent issue creation (replay, reuse, in progress, expiry, photos);
+- the dashboard statistics and activity feed.
 
 ## Run the API in Docker too (optional)
 

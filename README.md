@@ -22,8 +22,14 @@ fixit/
 FIX-IT/
 ├── README.md                  this file
 ├── .gitignore                 keeps .env, node_modules and runtime data out of git
+├── docs/
+│   ├── ARCHITECTURE.md        diagrams, architecture review, roadmap
+│   ├── problems.md            the API's error types (RFC 9457 Problem Details)
+│   └── decisions/             decision records (why the API looks the way it does)
 │
 ├── backend/                   Node.js + Express API (port 3000)
+│   ├── openapi.yaml           THE API CONTRACT (OpenAPI 3.1), enforced by the server
+│   ├── redocly.yaml           lint rules for the contract (npm run lint:api)
 │   ├── docker-compose.yml     PostgreSQL in Docker (+ optional API container)
 │   ├── Dockerfile             the API as a container image
 │   ├── .env.example           settings to copy into .env (never commit .env)
@@ -32,7 +38,7 @@ FIX-IT/
 │   ├── src/
 │   │   ├── server.js          builds the Express app, starts it
 │   │   ├── routes/            HTTP endpoints: auth, properties, issues, offers, team, health
-│   │   ├── middleware/        auth.js: who is calling (token -> user), which role
+│   │   ├── middleware/        auth.js (token -> user, role), idempotency.js (Idempotency-Key)
 │   │   ├── models/            the repository layer: the ONLY code that runs SQL
 │   │   ├── db/                connection pool, schema.sql, migrations/
 │   │   ├── import/            CSV parser + idempotent import
@@ -57,6 +63,12 @@ How a request travels: **page** (`frontend/src/pages`) → **`api.js`** → Vite
 `/api` → **route** (`backend/src/routes`) checks the sign-in and the input → **model**
 (`backend/src/models`) applies the rules and runs SQL → **PostgreSQL** in Docker. The
 answer goes back the same way as JSON.
+
+**Week 3: the API contract.** [`backend/openapi.yaml`](backend/openapi.yaml) (OpenAPI 3.1,
+linted with Redocly) describes every endpoint; the server enforces it on every request,
+and on every response in development and tests. Errors are [Problem Details](docs/problems.md),
+lists are cursor-paginated, creating an issue is idempotent, and every design decision is
+recorded in [docs/decisions/](docs/decisions/README.md).
 
 **Week 1 hand-in:** the API choice, how to run it, the schema and what was surprising in
 the data are all in **[backend/README.md](backend/README.md)**, which starts with a table
@@ -120,7 +132,7 @@ the one before it. The reasons, and the design of the bigger items, are in
 - [ ] **Optional:** two-factor sign-in (TOTP app) for landlords and workers, who will handle money
 
 ### Phase 2: growth and the user experience
-- [ ] **Pagination** on issue and property lists; the dashboard summary computed by one SQL query
+- [x] **Pagination** on issue and property lists; the dashboard summary computed by one SQL query (week 3)
 - [ ] **Email notifications:** new job offer, offer answered, worker assigned, "please confirm the fix"
 - [ ] **Job offers expire** (e.g. after 48 hours), so a forgotten offer doesn't block an issue
 - [ ] **Workers choose whether they appear in the directory**, and landlords get a daily offer limit
