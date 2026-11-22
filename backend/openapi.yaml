@@ -1281,12 +1281,14 @@ components:
             - $ref: "#/components/schemas/Urgency"
           default: normal
     NewIssueWithPhotos:
-      description: NewIssue as form fields, plus photos.
+      description: |
+        NewIssue as form fields, plus photos. In multipart/form-data every field is text,
+        so `propertyId` is a string of digits here ("4"), not a JSON number.
       type: object
       required: [propertyId, title, description, category]
       additionalProperties: false
       properties:
-        propertyId: { type: integer, minimum: 1 }
+        propertyId: { type: string, pattern: "^[1-9][0-9]{0,9}$", example: "4" }
         title: { type: string, minLength: 3, maxLength: 120 }
         description: { type: string, minLength: 10, maxLength: 5000 }
         category: { $ref: "#/components/schemas/Category" }
