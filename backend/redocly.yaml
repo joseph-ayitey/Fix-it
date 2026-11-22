@@ -1,0 +1,12 @@
+# Redocly CLI config: `npx @redocly/cli lint openapi.yaml` (or `npm run lint:api`).
+extends:
+  - recommended
+rules:
+  # No licence has been chosen for this repository yet; add info.license when one is.
+  info-license: off
+  # Every operation must document its errors and have an id and summary.
+  operation-4xx-response: error
+  operation-operationId: error
+  operation-summary: error
+  # Keep descriptions on tags so the generated docs read well.
+  tag-description: error

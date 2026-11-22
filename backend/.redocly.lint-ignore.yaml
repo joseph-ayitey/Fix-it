@@ -1,0 +1,6 @@
+# Deliberate exceptions to the lint rules in redocly.yaml. Each one needs a reason.
+openapi.yaml:
+  operation-4xx-response:
+    # GET /health takes no input (no body, query or path parameters, no auth), so there
+    # is no client error it can return. Documenting a fake 4xx would make the contract lie.
+    - '#/paths/~1health/get/responses'

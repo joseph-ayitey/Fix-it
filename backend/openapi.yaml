@@ -1,0 +1,1450 @@
+openapi: 3.1.0
+info:
+  title: FixIt API
+  version: 2.0.0
+  summary: Property maintenance between landlords, tenants and workers.
+  description: |
+    FixIt connects **tenants** who report what's broken, **landlords** who organise the
+    repair, and **workers** who fix it.
+
+    This document is the contract: the server validates every request against it, and in
+    development and tests every response too. Change this file first, then the code.
+
+    ## Conventions
+    - **Authentication:** `Authorization: Bearer <token>` on every endpoint except
+      `/health`, `/auth/register` and `/auth/login`.
+    - **Errors** are [RFC 9457 Problem Details](https://www.rfc-editor.org/rfc/rfc9457)
+      (`application/problem+json`). Validation errors list every invalid field in
+      `errors`. Any endpoint can also answer `500` with a Problem Details body.
+    - **Other people's data is a 404, not a 403**, so ids can't be probed.
+    - **Collections** return `{ items, page }` and use cursor pagination: pass
+      `page.nextCursor` back as `cursor` to get the next page.
+    - **Nullable fields** are written `type: [string, "null"]`: the field is always
+      present, and `null` means "we don't have this" (no postcode, nobody assigned…).
+    - **Times** are ISO-8601 in UTC (`2026-11-22T09:30:00.000Z`).
+    - **Field names** are camelCase.
+  contact:
+    name: FixIt on GitHub
+    url: https://github.com/joseph-ayitey/fixit
+servers:
+  - url: /api
+    description: Same origin as the web app (the Vite dev server forwards /api to the backend).
+security:
+  - bearerAuth: []
+tags:
+  - name: Health
+    description: Is the API up, and can it reach its database?
+  - name: Auth
+    description: Accounts, signing in, your own profile.
+  - name: Properties
+    description: A landlord's properties, and tenants joining them with a join code.
+  - name: Issues
+    description: Reported problems, their timeline, status changes and confirmations.
+  - name: Offers
+    description: Landlords offering a job to a worker, and the worker's answer.
+  - name: Team
+    description: Who works with whom, and the worker directory.
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: Check the API and its database
+      security: []
+      responses:
+        "200":
+          description: The API and the database are up.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: The API is up but the database isn't reachable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      summary: Create an account
+      description: Workers must choose a trade; tenants and landlords must not send one.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: Account created, and signed in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResult" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Sign in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Signed in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResult" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: Who am I?
+      responses:
+        "200":
+          description: The signed-in user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [Auth]
+      operationId: updateMe
+      summary: Update your own profile
+      description: Only the fields you send change. `trade` and `area` are for workers only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProfileUpdate" }
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /properties:
+    get:
+      tags: [Properties]
+      operationId: listProperties
+      summary: List properties you can see
+      description: |
+        Landlord: the properties you own. Tenant: the ones you've joined. Worker: the ones
+        where you have an active job. Newest first.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: q
+          in: query
+          description: Case-insensitive search in the label and the address.
+          schema: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: A page of properties.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PropertyPage" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Properties]
+      operationId: createProperty
+      summary: Add a property (landlords)
+      description: |
+        The address is geocoded with OpenStreetMap. If the lookup fails or finds nothing,
+        the property is still created, with `geocodeStatus` saying why and no coordinates.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NewProperty" }
+      responses:
+        "201":
+          description: Property created.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PropertyDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /properties/join:
+    post:
+      tags: [Properties]
+      operationId: joinProperty
+      summary: Join a property with its code (tenants)
+      description: The code is case-insensitive and may contain spaces or dashes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JoinRequest" }
+      responses:
+        "200":
+          description: You had already joined this property.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PropertyDetail" }
+        "201":
+          description: Joined.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PropertyDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /properties/{propertyId}:
+    parameters:
+      - $ref: "#/components/parameters/PropertyId"
+    get:
+      tags: [Properties]
+      operationId: getProperty
+      summary: Get one property
+      description: The landlord also gets the join code and the list of tenants.
+      responses:
+        "200":
+          description: The property.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PropertyDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Properties]
+      operationId: updateProperty
+      summary: Rename a property (landlords)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PropertyUpdate" }
+      responses:
+        "200":
+          description: The updated property.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PropertyDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /properties/{propertyId}/join-code:
+    parameters:
+      - $ref: "#/components/parameters/PropertyId"
+    post:
+      tags: [Properties]
+      operationId: rotateJoinCode
+      summary: Replace the join code (landlords)
+      description: The old code stops working. Tenants who already joined stay.
+      responses:
+        "200":
+          description: The property, with its new code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PropertyDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /properties/{propertyId}/geocode:
+    parameters:
+      - $ref: "#/components/parameters/PropertyId"
+    post:
+      tags: [Properties]
+      operationId: regeocodeProperty
+      summary: Retry the map lookup (landlords)
+      responses:
+        "200":
+          description: The property, with the new lookup result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PropertyDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /properties/{propertyId}/tenants/{tenantId}:
+    parameters:
+      - $ref: "#/components/parameters/PropertyId"
+      - name: tenantId
+        in: path
+        required: true
+        description: The tenant's user id.
+        schema: { type: integer, minimum: 1 }
+    delete:
+      tags: [Properties]
+      operationId: removeTenant
+      summary: End a tenancy (landlords)
+      description: The tenant's past issues stay on the property's record.
+      responses:
+        "204":
+          description: The tenant is no longer linked to the property.
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /issues:
+    get:
+      tags: [Issues]
+      operationId: listIssues
+      summary: List issues you can see
+      description: |
+        Landlord: every issue on your properties. Tenant: the issues you reported. Worker:
+        the issues assigned to you. Filters combine with AND.
+
+        `sort=priority` (default) puts active issues first, then urgent ones, then the
+        longest-waiting. `newest` and `updated` sort by date, newest first.
+      parameters:
+        - name: status
+          in: query
+          description: A status, or `active` for open + in progress.
+          schema: { type: string, enum: [active, open, in_progress, resolved, closed] }
+        - name: propertyId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: assignment
+          in: query
+          description: Only issues with (`assigned`) or without (`unassigned`) a worker.
+          schema: { type: string, enum: [assigned, unassigned] }
+        - name: urgency
+          in: query
+          schema: { $ref: "#/components/schemas/Urgency" }
+        - name: category
+          in: query
+          schema: { $ref: "#/components/schemas/Category" }
+        - name: q
+          in: query
+          description: Case-insensitive search in the title and description.
+          schema: { type: string, minLength: 1, maxLength: 200 }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [priority, newest, updated], default: priority }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of issues.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssuePage" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Issues]
+      operationId: createIssue
+      summary: Report an issue (tenants)
+      description: |
+        Send JSON, or `multipart/form-data` with the same fields plus up to 5 photos
+        (JPEG, PNG, WebP or GIF, 8 MB each; the real file type is checked).
+
+        **Idempotent with `Idempotency-Key`:** send a unique key per report (e.g. a UUID
+        made when the form is opened). If the request is retried with the same key and the
+        same body, the original issue is returned again (same status, plus
+        `Idempotent-Replayed: true`) instead of creating a second one. The same key with
+        a different body is a `422`; a retry while the first request is still running
+        is a `409`. Keys are remembered for 24 hours, per user.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NewIssue" }
+            examples:
+              leak:
+                summary: An urgent leak
+                value:
+                  propertyId: 1
+                  title: Water leaking under the kitchen sink
+                  description: Steady drip from the pipe; the cabinet floor is soaked.
+                  category: plumbing
+                  urgency: urgent
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/NewIssueWithPhotos" }
+            encoding:
+              photos:
+                contentType: image/jpeg, image/png, image/webp, image/gif
+      responses:
+        "201":
+          description: Issue reported (or, on an idempotent replay, the same issue again).
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssueDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/IdempotencyKeyReused" }
+
+  /issues/summary:
+    get:
+      tags: [Issues]
+      operationId: getIssueSummary
+      summary: Counts for your dashboard
+      responses:
+        "200":
+          description: Counts of what needs attention, from your point of view.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssueSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /issues/{issueId}:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    get:
+      tags: [Issues]
+      operationId: getIssue
+      summary: Get one issue with its timeline
+      description: |
+        Includes the timeline (`events`) and what you may do next (`allowedTransitions`,
+        `canConfirm`). Tenants never see private (`internal`) timeline entries. Landlords
+        also get the job `offers` made for this issue.
+      responses:
+        "200":
+          description: The issue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssueDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /issues/{issueId}/comments:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    post:
+      tags: [Issues]
+      operationId: addComment
+      summary: Comment on an issue
+      description: |
+        A comment needs text, photos, or both. `visibility: internal` is the private
+        landlord-worker thread: tenants can't write or see it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NewComment" }
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/NewCommentWithPhotos" }
+            encoding:
+              photos:
+                contentType: image/jpeg, image/png, image/webp, image/gif
+      responses:
+        "201":
+          description: Comment added; the updated issue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssueDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /issues/{issueId}/status:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    patch:
+      tags: [Issues]
+      operationId: changeIssueStatus
+      summary: Change an issue's status
+      description: |
+        Only the transitions listed in the issue's `allowedTransitions` are accepted
+        (otherwise `403`). Some need a `note` (`noteRequired: true`), e.g. reopening.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StatusChange" }
+      responses:
+        "200":
+          description: The updated issue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssueDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /issues/{issueId}/confirm:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    post:
+      tags: [Issues]
+      operationId: confirmFix
+      summary: Confirm a fix (tenant) or approve the work (landlord)
+      description: A resolved issue closes once both the tenant and the landlord have confirmed.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmRequest" }
+      responses:
+        "200":
+          description: The updated issue (`status` is `closed` if this was the last confirmation).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssueDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /issues/{issueId}/assignment:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    delete:
+      tags: [Issues]
+      operationId: unassignWorker
+      summary: Take the worker off an issue (landlords)
+      description: Workers are assigned by accepting a job offer (see `/offers`).
+      responses:
+        "200":
+          description: The updated issue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssueDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /issues/{issueId}/photos/{photoId}:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+      - name: photoId
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    get:
+      tags: [Issues]
+      operationId: getIssuePhoto
+      summary: Download a photo
+      description: |
+        Only for people who can see the issue and the timeline entry the photo is on.
+        Use the `url` given in the issue's timeline.
+      responses:
+        "200":
+          description: The image.
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+            image/gif:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /offers:
+    get:
+      tags: [Offers]
+      operationId: listMyOffers
+      summary: Your job offers (workers)
+      description: |
+        Pending offers first (urgent first), then answers from the last 30 days. At most
+        50; `page.nextCursor` is always null. Before accepting you see the job and its
+        city, not the address or the tenant.
+      responses:
+        "200":
+          description: Your offers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkerOfferPage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Offers]
+      operationId: createOffer
+      summary: Offer an issue to a worker (landlords)
+      description: |
+        The issue must be open or in progress, with nobody assigned and no other offer
+        waiting for an answer (`409` otherwise).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NewOffer" }
+      responses:
+        "201":
+          description: Offer sent; the issue, with its `offers`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssueDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /offers/{offerId}/accept:
+    parameters:
+      - $ref: "#/components/parameters/OfferId"
+    post:
+      tags: [Offers]
+      operationId: acceptOffer
+      summary: Accept a job offer (workers)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OfferAnswer" }
+      responses:
+        "200":
+          description: You're assigned; the full issue, now including the address.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssueDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /offers/{offerId}/decline:
+    parameters:
+      - $ref: "#/components/parameters/OfferId"
+    post:
+      tags: [Offers]
+      operationId: declineOffer
+      summary: Decline a job offer (workers)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OfferAnswer" }
+      responses:
+        "204":
+          description: Declined. The landlord sees your reason.
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /offers/{offerId}/withdraw:
+    parameters:
+      - $ref: "#/components/parameters/OfferId"
+    post:
+      tags: [Offers]
+      operationId: withdrawOffer
+      summary: Withdraw an unanswered offer (landlords)
+      responses:
+        "200":
+          description: Withdrawn; the issue, with its `offers`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssueDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /team/workers:
+    get:
+      tags: [Team]
+      operationId: listMyWorkers
+      summary: Workers who have accepted your jobs (landlords)
+      description: Bounded list; `page.nextCursor` is always null.
+      responses:
+        "200":
+          description: Your workers, with contact details.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamWorkerPage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /team/workers/{workerId}:
+    parameters:
+      - name: workerId
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    delete:
+      tags: [Team]
+      operationId: removeWorker
+      summary: Stop working with a worker (landlords)
+      description: Their active jobs on your properties become unassigned; pending offers to them are cancelled.
+      responses:
+        "200":
+          description: How many active issues were unassigned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RemoveWorkerResult" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /team/landlords:
+    get:
+      tags: [Team]
+      operationId: listMyLandlords
+      summary: Landlords you work for (workers)
+      description: Bounded list; `page.nextCursor` is always null.
+      responses:
+        "200":
+          description: Your landlords (names only).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamLandlordPage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /team/directory:
+    get:
+      tags: [Team]
+      operationId: findWorkers
+      summary: Find workers by trade (landlords)
+      description: |
+        Workers in `city` first, then those who already work for you, then by jobs
+        completed. At most 50; `page.nextCursor` is always null. No contact details:
+        names are shortened ("Marc R.") until a worker accepts one of your offers.
+      parameters:
+        - name: trade
+          in: query
+          schema: { $ref: "#/components/schemas/Trade" }
+        - name: city
+          in: query
+          description: Workers whose area mentions this text come first.
+          schema: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Matching workers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectoryWorkerPage" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: The `token` from `/auth/register` or `/auth/login`.
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Page size.
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Cursor:
+      name: cursor
+      in: query
+      description: The `page.nextCursor` from the previous page. Opaque; don't build it yourself.
+      schema: { type: string, minLength: 1, maxLength: 200 }
+    PropertyId:
+      name: propertyId
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    IssueId:
+      name: issueId
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    OfferId:
+      name: offerId
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: A unique value per intended action (a UUID is ideal), reused when retrying it.
+      schema: { type: string, minLength: 8, maxLength: 255, pattern: "^[\\x21-\\x7E]+$" }
+      example: 9f4e2c1a-6b1d-4d5e-9a3b-2c7f8e1d0a42
+
+  headers:
+    Location:
+      description: The URL of the created resource.
+      schema: { type: string }
+    IdempotentReplayed:
+      description: "`true` when this response is a replay of an earlier request with the same Idempotency-Key."
+      schema: { type: string, enum: ["true"] }
+
+  responses:
+    ValidationError:
+      description: The request is invalid; `errors` lists every problem.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: https://github.com/joseph-ayitey/fixit/blob/main/docs/problems.md#validation-error
+            title: Your request has invalid fields
+            status: 400
+            detail: "title: must NOT have fewer than 3 characters"
+            errors:
+              - field: title
+                message: must NOT have fewer than 3 characters
+    Unauthorized:
+      description: Not signed in, or the session expired.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Forbidden:
+      description: Signed in, but this action isn't allowed for you.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: It doesn't exist, or it isn't yours to see.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Conflict:
+      description: The request conflicts with the current state (e.g. already exists, already answered).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    PayloadTooLarge:
+      description: A photo is larger than 8 MB.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    UnsupportedMediaType:
+      description: The request body isn't JSON or multipart/form-data where one is required.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    IdempotencyKeyReused:
+      description: This Idempotency-Key was already used for a different request.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    # ---------- Errors ----------
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details. Extra members may be added later; ignore ones you don't know.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: Identifies the kind of problem; documented in docs/problems.md.
+        title: { type: string, description: "Short, human-readable summary of the problem type." }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail: { type: string, description: "What went wrong this time, for a human." }
+        instance: { type: string, description: The request path that failed. }
+        errors:
+          type: array
+          description: Validation errors, one per invalid field.
+          items: { $ref: "#/components/schemas/FieldError" }
+    FieldError:
+      type: object
+      required: [field, message]
+      properties:
+        field: { type: string, description: "The field, as a dotted path (e.g. `title`, `query.limit`)." }
+        message: { type: string }
+
+    # ---------- Enums ----------
+    Role:
+      type: string
+      enum: [landlord, tenant, worker]
+    Trade:
+      type: string
+      enum: [plumber, electrician, heating_engineer, appliance_repair, builder, locksmith, pest_control, handyman]
+    Category:
+      type: string
+      enum: [plumbing, electrical, heating, appliance, structural, pest, security, other]
+    Urgency:
+      type: string
+      enum: [low, normal, urgent]
+    IssueStatus:
+      type: string
+      enum: [open, in_progress, resolved, closed]
+    GeocodeStatus:
+      type: string
+      description: "`pending` = geocoding is turned off on the server; `no_match` = OpenStreetMap found nothing; `failed` = the lookup errored."
+      enum: [pending, ok, no_match, failed]
+    OfferStatus:
+      type: string
+      enum: [pending, accepted, declined, withdrawn, cancelled]
+    Visibility:
+      type: string
+      description: "`internal` = private between the landlord and the assigned worker."
+      enum: [shared, internal]
+
+    # ---------- Pagination ----------
+    PageInfo:
+      type: object
+      required: [limit, nextCursor, hasMore]
+      additionalProperties: false
+      properties:
+        limit: { type: integer, minimum: 1 }
+        nextCursor:
+          type: [string, "null"]
+          description: Pass as `cursor` to get the next page; `null` on the last page.
+        hasMore: { type: boolean }
+
+    # ---------- Health & auth ----------
+    Health:
+      type: object
+      required: [status, database, geocoding]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        database: { type: string, enum: [up, down] }
+        geocoding: { type: string, enum: [enabled, disabled] }
+    User:
+      type: object
+      required: [id, email, name, role, createdAt]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        email: { type: string, format: email }
+        name: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        trade:
+          description: Workers only.
+          oneOf:
+            - { $ref: "#/components/schemas/Trade" }
+            - { type: "null" }
+        area:
+          type: [string, "null"]
+          description: Workers only. Where they work, e.g. "Barcelona".
+        createdAt: { type: string, format: date-time }
+    AuthResult:
+      type: object
+      required: [token, user]
+      additionalProperties: false
+      properties:
+        token: { type: string, description: "A JWT to send as `Authorization: Bearer <token>`." }
+        user: { $ref: "#/components/schemas/User" }
+    MeResponse:
+      type: object
+      required: [user]
+      additionalProperties: false
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+    RegisterRequest:
+      type: object
+      required: [email, name, password, role]
+      additionalProperties: false
+      properties:
+        email: { type: string, format: email, maxLength: 320 }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        password: { type: string, minLength: 8, maxLength: 200, writeOnly: true }
+        role: { $ref: "#/components/schemas/Role" }
+        trade: { $ref: "#/components/schemas/Trade" }
+        area: { type: [string, "null"], maxLength: 200 }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email: { type: string, format: email, maxLength: 320 }
+        password: { type: string, minLength: 1, maxLength: 200, writeOnly: true }
+    ProfileUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        trade: { $ref: "#/components/schemas/Trade" }
+        area: { type: [string, "null"], maxLength: 200 }
+
+    # ---------- Properties ----------
+    PersonContact:
+      type: object
+      required: [id, name, email]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+    PropertyFields:
+      type: object
+      description: The fields every property has. Use Property or PropertyDetail.
+      required:
+        [id, label, addressInput, streetAddress, city, postcode, country, countryCode, latitude, longitude,
+         displayName, geocodeStatus, landlord, tenantCount, openIssueCount, urgentIssueCount, createdAt, updatedAt]
+      properties:
+        id: { type: integer }
+        label: { type: [string, "null"], description: The landlord's nickname for it. }
+        addressInput: { type: string, description: The address exactly as the landlord typed it. }
+        streetAddress: { type: [string, "null"] }
+        city: { type: [string, "null"] }
+        postcode: { type: [string, "null"] }
+        country: { type: [string, "null"] }
+        countryCode: { type: [string, "null"] }
+        latitude: { type: [number, "null"], minimum: -90, maximum: 90 }
+        longitude: { type: [number, "null"], minimum: -180, maximum: 180 }
+        displayName: { type: [string, "null"], description: OpenStreetMap's full address. }
+        geocodeStatus: { $ref: "#/components/schemas/GeocodeStatus" }
+        landlord: { $ref: "#/components/schemas/PersonContact" }
+        tenantCount: { type: integer, minimum: 0 }
+        openIssueCount: { type: integer, minimum: 0 }
+        urgentIssueCount: { type: integer, minimum: 0 }
+        joinCode:
+          type: string
+          description: The landlord only. Share it with tenants so they can join.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Property:
+      description: A property, as listed.
+      allOf:
+        - $ref: "#/components/schemas/PropertyFields"
+      unevaluatedProperties: false
+    PropertyDetail:
+      description: A property; the landlord also gets `tenants`.
+      allOf:
+        - $ref: "#/components/schemas/PropertyFields"
+        - type: object
+          properties:
+            tenants:
+              type: array
+              items: { $ref: "#/components/schemas/Tenant" }
+      unevaluatedProperties: false
+    Tenant:
+      type: object
+      required: [id, name, email, joinedAt]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+        joinedAt: { type: string, format: date-time }
+    PropertyPage:
+      type: object
+      required: [items, page]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Property" }
+        page: { $ref: "#/components/schemas/PageInfo" }
+    NewProperty:
+      type: object
+      required: [address]
+      additionalProperties: false
+      properties:
+        address: { type: string, minLength: 5, maxLength: 500, example: "Carrer de Mallorca 401, Barcelona, Spain" }
+        label: { type: [string, "null"], maxLength: 200, example: Eixample flat }
+    PropertyUpdate:
+      type: object
+      required: [label]
+      additionalProperties: false
+      properties:
+        label: { type: [string, "null"], maxLength: 200 }
+    JoinRequest:
+      type: object
+      required: [code]
+      additionalProperties: false
+      properties:
+        code: { type: string, minLength: 1, maxLength: 20, example: ABCD-2345 }
+
+    # ---------- Issues ----------
+    IssueProperty:
+      type: object
+      required: [id, label, address, city, latitude, longitude]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        label: { type: [string, "null"] }
+        address: { type: string }
+        city: { type: [string, "null"] }
+        latitude: { type: [number, "null"] }
+        longitude: { type: [number, "null"] }
+    PersonRef:
+      type: object
+      required: [id, name]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string, description: "Full name, or \"Marc R.\" where privacy rules apply." }
+    Assignee:
+      type: object
+      required: [id, name, trade, tradeLabel]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        trade:
+          oneOf:
+            - { $ref: "#/components/schemas/Trade" }
+            - { type: "null" }
+        tradeLabel: { type: [string, "null"], example: Plumber }
+    Transition:
+      type: object
+      required: [to, noteRequired]
+      additionalProperties: false
+      properties:
+        to: { $ref: "#/components/schemas/IssueStatus" }
+        noteRequired: { type: boolean }
+    IssueFields:
+      type: object
+      description: The fields every issue has. Use Issue or IssueDetail.
+      required:
+        [id, property, reporter, assignee, assignedAt, title, description, category, urgency, status,
+         acknowledgedAt, resolvedAt, confirmations, closedAt, createdAt, updatedAt, photoCount,
+         allowedTransitions, canConfirm]
+      properties:
+        id: { type: integer }
+        property: { $ref: "#/components/schemas/IssueProperty" }
+        reporter: { $ref: "#/components/schemas/PersonRef" }
+        assignee:
+          description: The worker on the job; `null` if nobody is assigned.
+          oneOf:
+            - { $ref: "#/components/schemas/Assignee" }
+            - { type: "null" }
+        assignedAt: { type: [string, "null"], format: date-time }
+        title: { type: string }
+        description: { type: string }
+        category: { $ref: "#/components/schemas/Category" }
+        urgency: { $ref: "#/components/schemas/Urgency" }
+        status: { $ref: "#/components/schemas/IssueStatus" }
+        acknowledgedAt:
+          type: [string, "null"]
+          format: date-time
+          description: First response from the landlord's side; `null` = nobody has responded yet.
+        resolvedAt: { type: [string, "null"], format: date-time }
+        confirmations:
+          type: object
+          description: Who has confirmed the current fix. Both are needed to close it.
+          required: [tenant, landlord]
+          additionalProperties: false
+          properties:
+            tenant: { type: [string, "null"], format: date-time }
+            landlord: { type: [string, "null"], format: date-time }
+        closedAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        photoCount: { type: integer, minimum: 0 }
+        allowedTransitions:
+          type: array
+          description: The status changes YOU may make right now.
+          items: { $ref: "#/components/schemas/Transition" }
+        canConfirm: { type: boolean, description: Whether YOU may confirm the fix right now. }
+    Photo:
+      type: object
+      required: [id, url, originalName, mimeType, sizeBytes]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        url: { type: string, description: Download it with your token (see getIssuePhoto). }
+        originalName: { type: string }
+        mimeType: { type: string, enum: [image/jpeg, image/png, image/webp, image/gif] }
+        sizeBytes: { type: integer, minimum: 1 }
+    IssueEvent:
+      type: object
+      required: [id, type, visibility, actor, subject, body, fromStatus, toStatus, createdAt, photos]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        type:
+          type: string
+          enum: [reported, comment, status_change, assigned, unassigned, confirmed,
+                 offer_sent, offer_accepted, offer_declined, offer_withdrawn]
+        visibility: { $ref: "#/components/schemas/Visibility" }
+        actor:
+          type: object
+          required: [id, name, role]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            role: { $ref: "#/components/schemas/Role" }
+        subject:
+          description: For assignments and offers, the worker it's about.
+          oneOf:
+            - type: object
+              required: [id, name, tradeLabel]
+              additionalProperties: false
+              properties:
+                id: { type: integer }
+                name: { type: string }
+                tradeLabel: { type: [string, "null"] }
+            - { type: "null" }
+        body: { type: [string, "null"] }
+        fromStatus:
+          oneOf:
+            - { $ref: "#/components/schemas/IssueStatus" }
+            - { type: "null" }
+        toStatus:
+          oneOf:
+            - { $ref: "#/components/schemas/IssueStatus" }
+            - { type: "null" }
+        createdAt: { type: string, format: date-time }
+        photos:
+          type: array
+          items: { $ref: "#/components/schemas/Photo" }
+    IssueOffer:
+      type: object
+      required: [id, status, worker, message, response, createdAt, respondedAt]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        status: { $ref: "#/components/schemas/OfferStatus" }
+        worker: { $ref: "#/components/schemas/Assignee" }
+        message: { type: [string, "null"] }
+        response: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        respondedAt: { type: [string, "null"], format: date-time }
+    Issue:
+      description: An issue, as listed.
+      allOf:
+        - $ref: "#/components/schemas/IssueFields"
+      unevaluatedProperties: false
+    IssueDetail:
+      description: An issue with its timeline; landlords also get the job offers.
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/IssueFields"
+        - type: object
+          required: [events]
+          properties:
+            events:
+              type: array
+              items: { $ref: "#/components/schemas/IssueEvent" }
+            offers:
+              type: array
+              description: Landlords only.
+              items: { $ref: "#/components/schemas/IssueOffer" }
+    IssuePage:
+      type: object
+      required: [items, page]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Issue" }
+        page: { $ref: "#/components/schemas/PageInfo" }
+    IssueSummary:
+      type: object
+      required: [active, urgent, unacknowledged, unassigned, awaitingConfirmation, needsYourConfirmation]
+      additionalProperties: false
+      properties:
+        active: { type: integer, minimum: 0 }
+        urgent: { type: integer, minimum: 0, description: Active and urgent. }
+        unacknowledged: { type: integer, minimum: 0, description: "Active, and nobody has responded yet." }
+        unassigned: { type: integer, minimum: 0, description: "Active, with no worker." }
+        awaitingConfirmation: { type: integer, minimum: 0, description: "Resolved, not yet confirmed by both." }
+        needsYourConfirmation: { type: integer, minimum: 0, description: "Resolved, waiting for YOUR confirmation." }
+        pendingOffers: { type: integer, minimum: 0, description: Workers only. Offers waiting for your answer. }
+    NewIssue:
+      type: object
+      required: [propertyId, title, description, category]
+      additionalProperties: false
+      properties:
+        propertyId: { type: integer, minimum: 1 }
+        title: { type: string, minLength: 3, maxLength: 120 }
+        description: { type: string, minLength: 10, maxLength: 5000 }
+        category: { $ref: "#/components/schemas/Category" }
+        urgency:
+          allOf:
+            - $ref: "#/components/schemas/Urgency"
+          default: normal
+    NewIssueWithPhotos:
+      description: NewIssue as form fields, plus photos.
+      type: object
+      required: [propertyId, title, description, category]
+      additionalProperties: false
+      properties:
+        propertyId: { type: integer, minimum: 1 }
+        title: { type: string, minLength: 3, maxLength: 120 }
+        description: { type: string, minLength: 10, maxLength: 5000 }
+        category: { $ref: "#/components/schemas/Category" }
+        urgency: { $ref: "#/components/schemas/Urgency" }
+        photos:
+          type: array
+          maxItems: 5
+          items: { type: string, format: binary }
+    NewComment:
+      type: object
+      additionalProperties: false
+      properties:
+        body: { type: [string, "null"], maxLength: 5000 }
+        visibility:
+          allOf:
+            - $ref: "#/components/schemas/Visibility"
+          default: shared
+    NewCommentWithPhotos:
+      type: object
+      additionalProperties: false
+      properties:
+        body: { type: string, maxLength: 5000 }
+        visibility: { $ref: "#/components/schemas/Visibility" }
+        photos:
+          type: array
+          maxItems: 5
+          items: { type: string, format: binary }
+    StatusChange:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: { $ref: "#/components/schemas/IssueStatus" }
+        note: { type: [string, "null"], maxLength: 5000 }
+    ConfirmRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        note: { type: [string, "null"], maxLength: 5000 }
+
+    # ---------- Offers ----------
+    NewOffer:
+      type: object
+      required: [issueId, workerId]
+      additionalProperties: false
+      properties:
+        issueId: { type: integer, minimum: 1 }
+        workerId: { type: integer, minimum: 1 }
+        message: { type: [string, "null"], maxLength: 2000 }
+    OfferAnswer:
+      type: object
+      additionalProperties: false
+      properties:
+        response: { type: [string, "null"], maxLength: 2000 }
+    WorkerOffer:
+      type: object
+      required: [id, status, message, response, createdAt, respondedAt, landlord, issue]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        status: { $ref: "#/components/schemas/OfferStatus" }
+        message: { type: [string, "null"] }
+        response: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        respondedAt: { type: [string, "null"], format: date-time }
+        landlord: { $ref: "#/components/schemas/PersonRef" }
+        issue:
+          type: object
+          description: A preview of the job. No address or tenant until accepted.
+          required: [id, title, category, urgency, description, city, photoCount, status]
+          additionalProperties: false
+          properties:
+            id: { type: integer }
+            title: { type: string }
+            category: { $ref: "#/components/schemas/Category" }
+            urgency: { $ref: "#/components/schemas/Urgency" }
+            description: { type: string }
+            city: { type: [string, "null"] }
+            photoCount: { type: integer, minimum: 0 }
+            status: { $ref: "#/components/schemas/IssueStatus" }
+    WorkerOfferPage:
+      type: object
+      required: [items, page]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WorkerOffer" }
+        page: { $ref: "#/components/schemas/PageInfo" }
+
+    # ---------- Team ----------
+    TeamWorker:
+      type: object
+      required: [id, name, email, trade, area, addedAt, activeJobs]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+        trade:
+          oneOf:
+            - { $ref: "#/components/schemas/Trade" }
+            - { type: "null" }
+        area: { type: [string, "null"] }
+        addedAt: { type: string, format: date-time }
+        activeJobs: { type: integer, minimum: 0 }
+    TeamWorkerPage:
+      type: object
+      required: [items, page]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TeamWorker" }
+        page: { $ref: "#/components/schemas/PageInfo" }
+    TeamLandlord:
+      type: object
+      required: [id, name, addedAt]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        addedAt: { type: string, format: date-time }
+    TeamLandlordPage:
+      type: object
+      required: [items, page]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TeamLandlord" }
+        page: { $ref: "#/components/schemas/PageInfo" }
+    DirectoryWorker:
+      type: object
+      required: [id, name, trade, tradeLabel, area, worksForYou, completedJobs, activeJobs, inArea]
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        name: { type: string, description: Shortened ("Marc R.") unless they already work for you. }
+        trade: { $ref: "#/components/schemas/Trade" }
+        tradeLabel: { type: string, example: Plumber }
+        area: { type: [string, "null"] }
+        worksForYou: { type: boolean }
+        completedJobs: { type: integer, minimum: 0 }
+        activeJobs: { type: integer, minimum: 0 }
+        inArea: { type: boolean, description: Whether their area matches the `city` you searched for. }
+    DirectoryWorkerPage:
+      type: object
+      required: [items, page]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DirectoryWorker" }
+        page: { $ref: "#/components/schemas/PageInfo" }
+    RemoveWorkerResult:
+      type: object
+      required: [unassignedIssues]
+      additionalProperties: false
+      properties:
+        unassignedIssues: { type: integer, minimum: 0 }

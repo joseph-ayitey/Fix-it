@@ -10,7 +10,8 @@
     "dev": "node --watch-path=./src --watch-path=./.env src/server.js",
     "seed": "node scripts/seed.js",
     "db:status": "node scripts/db-status.js",
-    "import": "node scripts/import.js"
+    "import": "node scripts/import.js",
+    "lint:api": "npx -y @redocly/cli@2.82.0 lint openapi.yaml"
   },
   "engines": {
     "node": ">=20"
