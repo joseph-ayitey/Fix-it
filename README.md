@@ -97,6 +97,13 @@ as a landlord, tenant or worker. To test all three at once, use three browser ta
 tab has its own sign-in. (`npm run seed` creates demo accounts instead, all with password
 `password123`: `landlord@fixit.test`, `tenant@fixit.test`, `worker@fixit.test`.)
 
+## Checking the API contract
+
+```bash
+npx @redocly/cli lint                          # from the repository root
+cd backend && npx @redocly/cli lint openapi.yaml   # or from backend/ (same rules)
+```
+
 ## Tests
 
 ```bash

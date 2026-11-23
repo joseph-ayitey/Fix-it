@@ -1,0 +1,11 @@
+# Lets the contract be linted from the repository root as well as from backend/:
+#   npx @redocly/cli lint                        (root: lints the "fixit" API below)
+#   npx @redocly/cli lint backend/openapi.yaml   (root)
+#   cd backend && npx @redocly/cli lint openapi.yaml
+# The rules themselves live in backend/redocly.yaml; Redocly only reads the config in
+# the folder it's run from, hence this small file.
+extends:
+  - ./backend/redocly.yaml
+apis:
+  fixit:
+    root: backend/openapi.yaml

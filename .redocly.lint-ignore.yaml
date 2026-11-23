@@ -1,0 +1,5 @@
+# Same deliberate exception as backend/.redocly.lint-ignore.yaml, for lints run from the
+# repository root: GET /health takes no input, so it has no client error to document.
+backend/openapi.yaml:
+  operation-4xx-response:
+    - '#/paths/~1health/get/responses'
