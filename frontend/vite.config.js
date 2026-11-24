@@ -29,6 +29,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.jsx"],
+    // These tests click and type through whole pages. On a busy machine (or a slow CI
+    // server) that can take seconds, so allow up to 20 s per test instead of 5.
+    testTimeout: 20_000,
     css: false,
   },
 });

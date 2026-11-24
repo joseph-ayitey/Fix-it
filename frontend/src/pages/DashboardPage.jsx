@@ -300,14 +300,14 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const role = user.role;
 
-  const summary = useApi((signal) => api.issueSummary({ signal }), []);
+  const summary = useApi((signal) => api.issueSummary({ signal }), [], { live: true });
   // The first 100 (the API's largest page) is plenty for a dashboard map; the
   // Properties page has "Load more" for the rest.
-  const properties = useApi((signal) => api.listProperties({ limit: 100 }, { signal }), []);
-  const stats = useApi((signal) => api.dashboardStats({ signal }), []);
+  const properties = useApi((signal) => api.listProperties({ limit: 100 }, { signal }), [], { live: true });
+  const stats = useApi((signal) => api.dashboardStats({ signal }), [], { live: true });
   // The top of the inbox: the server's default `priority` sort puts what needs attention first.
-  const issues = useApi((signal) => api.listIssues({ status: "active", limit: 5 }, { signal }), []);
-  const offers = useApi((signal) => (role === "worker" ? api.offers({ signal }) : Promise.resolve(null)), [role]);
+  const issues = useApi((signal) => api.listIssues({ status: "active", limit: 5 }, { signal }), [], { live: true });
+  const offers = useApi((signal) => (role === "worker" ? api.offers({ signal }) : Promise.resolve(null)), [role], { live: true });
 
   const header = (homes, s) => (
     <div className="page-header page-header--row">

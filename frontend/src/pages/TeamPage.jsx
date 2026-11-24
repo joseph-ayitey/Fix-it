@@ -68,7 +68,7 @@ function Directory() {
 }
 
 function LandlordTeam() {
-  const team = useApi((signal) => api.myWorkers({ signal }), []);
+  const team = useApi((signal) => api.myWorkers({ signal }), [], { live: true });
   const [error, setError] = useState(null);
   const [removed, setRemoved] = useState(null);
 
@@ -139,7 +139,7 @@ function WorkerProfile() {
   const { user, updateProfile } = useAuth();
   const [form, setForm] = useState({ trade: user.trade ?? "", area: user.area ?? "" });
   const [state, setState] = useState({ busy: false, error: null, saved: false });
-  const landlords = useApi((signal) => api.myLandlords({ signal }), []);
+  const landlords = useApi((signal) => api.myLandlords({ signal }), [], { live: true });
 
   async function onSubmit(e) {
     e.preventDefault();

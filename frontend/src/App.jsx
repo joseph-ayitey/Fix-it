@@ -15,7 +15,7 @@ import { Loading } from "./components/Status.jsx";
 import TeamPage from "./pages/TeamPage.jsx";
 
 function HealthBanner() {
-  const { error, data } = useApi((signal) => api.health({ signal }), []);
+  const { error, data } = useApi((signal) => api.health({ signal }), [], { live: true }); // the banner clears by itself once the server is back
   if (!error && data?.status !== "degraded") return null;
   return (
     <div className="banner banner--error banner--top" role="alert">

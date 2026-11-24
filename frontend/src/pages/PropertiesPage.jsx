@@ -13,7 +13,7 @@ export default function PropertiesPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const isLandlord = user.role === "landlord";
-  const list = usePagedApi((cursor, signal) => api.listProperties({ limit: PAGE_SIZE, cursor }, { signal }), []);
+  const list = usePagedApi((cursor, signal, size) => api.listProperties({ limit: size ?? PAGE_SIZE, cursor }, { signal }), [], { live: true });
 
   const header = (
     <div className="page-header page-header--row">

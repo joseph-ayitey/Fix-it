@@ -115,8 +115,8 @@ export default function PropertyDetailPage() {
   const { user } = useAuth();
   const isLandlord = user.role === "landlord";
 
-  const property = useApi((signal) => api.getProperty(id, { signal }), [id]);
-  const issues = usePagedApi((cursor, signal) => api.listIssues({ propertyId: id, limit: 20, cursor }, { signal }), [id]);
+  const property = useApi((signal) => api.getProperty(id, { signal }), [id], { live: true });
+  const issues = usePagedApi((cursor, signal, size) => api.listIssues({ propertyId: id, limit: size ?? 20, cursor }, { signal }), [id], { live: true });
   const [geocode, setGeocode] = useState({ busy: false, error: null });
 
   if (property.error) {

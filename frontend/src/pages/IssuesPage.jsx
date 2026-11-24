@@ -88,13 +88,14 @@ export default function IssuesPage() {
   const sort = params.get("sort") ?? "priority";
 
   const issues = usePagedApi(
-    (cursor, signal) =>
+    (cursor, signal, size) =>
       api.listIssues(
         // `priority` is the server's default, so it's left out of the request and the URL.
-        { status, propertyId, assignment, urgency, category, q, sort: sort === "priority" ? "" : sort, limit: PAGE_SIZE, cursor },
+        { status, propertyId, assignment, urgency, category, q, sort: sort === "priority" ? "" : sort, limit: size ?? PAGE_SIZE, cursor },
         { signal },
       ),
     [status, propertyId, assignment, urgency, category, q, sort],
+    { live: true }, // new reports and status changes by others appear without a refresh
   );
   // For the property filter. Up to 100 (the API's maximum page size) is plenty for a
   // drop-down; a landlord with more would search by text instead.

@@ -355,7 +355,7 @@ export default function IssueDetailPage() {
   const { id } = useParams();
   const location = useLocation();
   const { user } = useAuth();
-  const { data: issue, error, setData, reload } = useApi((signal) => api.getIssue(id, { signal }), [id]);
+  const { data: issue, error, setData, reload } = useApi((signal) => api.getIssue(id, { signal }), [id], { live: true });
 
   if (error) {
     // A malformed id ("/issues/abc") is a 400 for path.issueId, and someone else's issue
