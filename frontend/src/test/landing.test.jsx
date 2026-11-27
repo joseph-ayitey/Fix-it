@@ -54,6 +54,28 @@ describe("landing page", () => {
     for (const label of [/^Landlord/, /^Tenant/, /^Worker/]) expect(screen.getByLabelText(label)).not.toBeChecked();
   });
 
+  it("public pages are indexable with a real title; private pages are marked noindex", async () => {
+    fakeFetch(health);
+    renderApp("/");
+    await screen.findByRole("heading", { name: "Home repairs, sorted." });
+    expect(document.title).toMatch(/^FixIt: home repairs, sorted/);
+    expect(document.querySelector('meta[name="robots"]').content).toBe("index, follow");
+  });
+
+  it("a private page gets its own title and noindex", async () => {
+    tokenStore.set("token");
+    fakeFetch({
+      ...health,
+      "GET /auth/me": () => ({ body: { user: landlordUser } }),
+      "GET /issues": () => ({ body: { items: [], page: { limit: 20, nextCursor: null, hasMore: false } } }),
+      "GET /properties": () => ({ body: { items: [], page: { limit: 100, nextCursor: null, hasMore: false } } }),
+    });
+    renderApp("/issues");
+    await screen.findByRole("heading", { name: "Issue inbox" });
+    expect(document.title).toBe("Issues · FixIt");
+    expect(document.querySelector('meta[name="robots"]').content).toBe("noindex, nofollow");
+  });
+
   it("signed-in users get their dashboard at / instead", async () => {
     tokenStore.set("token");
     fakeFetch({

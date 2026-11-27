@@ -1,18 +1,27 @@
+import { lazy, Suspense } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { api } from "./api.js";
 import { RequireAuth, useAuth } from "./auth.jsx";
 import { useApi } from "./useApi.js";
+import { usePageMeta } from "./usePageMeta.js";
+import { Loading, Skeleton } from "./components/Status.jsx";
+// Loaded straight away: where new visitors arrive (landing, sign in, sign up).
 import { LoginPage, SignupPage } from "./pages/AuthPages.jsx";
-import DashboardPage from "./pages/DashboardPage.jsx";
-import PropertiesPage, { AddPropertyPage, JoinPropertyPage } from "./pages/PropertiesPage.jsx";
-import PropertyDetailPage from "./pages/PropertyDetailPage.jsx";
-import IssuesPage from "./pages/IssuesPage.jsx";
-import NewIssuePage from "./pages/NewIssuePage.jsx";
-import IssueDetailPage from "./pages/IssueDetailPage.jsx";
-import NotFoundPage from "./pages/NotFoundPage.jsx";
 import LandingPage from "./pages/LandingPage.jsx";
-import { Loading } from "./components/Status.jsx";
-import TeamPage from "./pages/TeamPage.jsx";
+import NotFoundPage from "./pages/NotFoundPage.jsx";
+
+// Everything else is downloaded only when you go there ("code splitting"). A first-time
+// visitor on the landing page no longer downloads the dashboard, the charts, the issue
+// pages or the map library (Leaflet) that they haven't asked for.
+const DashboardPage = lazy(() => import("./pages/DashboardPage.jsx"));
+const PropertiesPage = lazy(() => import("./pages/PropertiesPage.jsx"));
+const AddPropertyPage = lazy(() => import("./pages/PropertiesPage.jsx").then((m) => ({ default: m.AddPropertyPage })));
+const JoinPropertyPage = lazy(() => import("./pages/PropertiesPage.jsx").then((m) => ({ default: m.JoinPropertyPage })));
+const PropertyDetailPage = lazy(() => import("./pages/PropertyDetailPage.jsx"));
+const IssuesPage = lazy(() => import("./pages/IssuesPage.jsx"));
+const NewIssuePage = lazy(() => import("./pages/NewIssuePage.jsx"));
+const IssueDetailPage = lazy(() => import("./pages/IssueDetailPage.jsx"));
+const TeamPage = lazy(() => import("./pages/TeamPage.jsx"));
 
 function HealthBanner() {
   const { error, data } = useApi((signal) => api.health({ signal }), [], { live: true }); // the banner clears by itself once the server is back
@@ -73,11 +82,15 @@ function Home() {
 }
 
 export default function App() {
+  const { user } = useAuth();
+  usePageMeta(Boolean(user));
   return (
     <>
       <Header />
       <HealthBanner />
       <main className="container">
+        {/* While a page's code downloads (usually a fraction of a second), show placeholders. */}
+        <Suspense fallback={<Skeleton variant="list" label="Loading page…" />}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
@@ -92,6 +105,7 @@ export default function App() {
           <Route path="/team" element={authed(<TeamPage />)} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
+        </Suspense>
       </main>
     </>
   );

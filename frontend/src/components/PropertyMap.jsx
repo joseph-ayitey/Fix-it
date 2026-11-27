@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
+// The map's own CSS travels with the map, so pages without a map never download it.
+import "leaflet/dist/leaflet.css";
 import { pinState } from "../labels.js";
 
 // OpenStreetMap's standard tiles, which fit the project's use of Nominatim. Per OSM's

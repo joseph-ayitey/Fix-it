@@ -77,13 +77,36 @@ src/test/                   All tests (*.test.jsx), the Vitest setup (stubs the 
 The sign-in token is kept in `sessionStorage`, one per tab. If storage is blocked, the app
 still works, but you'll be asked to sign in again after a reload.
 
+## Measuring performance (Lighthouse)
+
+Measure the **production build**, never `npm run dev`: the dev server sends unminified
+code, React's slow development build and hundreds of separate files, so its Lighthouse
+score is meaningless.
+
+```bash
+npm run build && npm run preview    # http://localhost:4173 (forwards /api to the backend like dev)
+```
+
+Then run Lighthouse on http://localhost:4173 in a private window (extensions skew it).
+
+What keeps it fast:
+- **Code splitting:** only the landing, sign-in and sign-up pages are in the first
+  download. Every other page is loaded when you open it (`React.lazy` in `App.jsx`), and
+  the map library (Leaflet, ~50 kB compressed) only with pages that show a map.
+- React and Leaflet are in their own files (`vite.config.js`), so the browser keeps them
+  cached across releases.
+
+SEO: `index.html` has the title and meta description; `public/robots.txt` lets search
+engines list only the public pages; `src/usePageMeta.js` gives every page its own title
+and marks signed-in pages `noindex`.
+
 ## Tests
 
 ```bash
 npm test
 ```
 
-48 tests in jsdom, with `fetch` faked (in the contract's shapes: `{ items, page }` collections and
+57 tests in jsdom, with `fetch` faked (in the contract's shapes: `{ items, page }` collections and
 Problem Details errors) so no backend is needed. They cover:
 - the API client (token header, Problem Details and field errors, sign-out on 401, unreachable server,
   split team endpoints, Idempotency-Key and Idempotent-Replayed)
